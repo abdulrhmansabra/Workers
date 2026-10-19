@@ -25,16 +25,20 @@ export const crunWebhookHandler: RouteHandler = async (request, env: Env) => {
   const job = jobDoc.data as unknown as JobDoc;
   if (payload.status === "succeeded" && payload.result_url) {
     try {
-      const resultKey = `outputs/${uid}/${jobId}.mp4`;
-      const resp = await fetch(payload.result_url);
+      const resultUrl = new URL(payload.result_url);
+      if (resultUrl.protocol !== "https:" || isPrivateHost(resultUrl.hostname)) throw new Error("INVALID_RESULT_URL");
+      const resp = await fetch(resultUrl.toString());
       if (!resp.ok || !resp.body) throw new Error("DOWNLOAD_FAILED");
-      await env.R2_BUCKET.put(resultKey, resp.body, { httpMetadata: { contentType: "video/mp4" }, customMetadata: { owner_uid: uid } });
+      const contentType = resp.headers.get("content-type")?.split(";")[0] ?? "video/mp4";
+      const ext = contentType === "image/png" ? "png" : contentType === "image/jpeg" ? "jpg" : contentType === "image/webp" ? "webp" : "mp4";
+      const resultKey = `outputs/${uid}/${jobId}.${ext}`;
+      await env.R2_BUCKET.put(resultKey, resp.body, { httpMetadata: { contentType }, customMetadata: { owner_uid: uid } });
       await updateDoc(env, `generation_jobs/${jobId}`, { status: "succeeded", output_asset_key: resultKey, crun_response: payload as unknown as Record<string, unknown>, completed_at: Date.now(), updated_at: Date.now() });
       safeLog("Webhook: job succeeded", { jobId });
     } catch { safeError("Webhook: download failed", { jobId }); throw new HttpError(500, "DOWNLOAD_FAILED", "Failed to download result"); }
   } else if (payload.status === "failed") {
     try { await refundCreditsForJob(env, uid, jobId, job.price, "crun_webhook_failed"); } catch { safeError("Webhook: refund failed", { jobId }); }
-    await updateDoc(env, `generation_jobs/${jobId}`, { status: "failed", error: payload.error ?? "CRUN_WEBHOOK_FAILED", completed_at: Date.now(), updated_at: Date.now() });
+    await updateDoc(env, `generation_jobs/${jobId}`, { error: payload.error ?? "CRUN_WEBHOOK_FAILED", completed_at: Date.now(), updated_at: Date.now() });
     safeLog("Webhook: job failed, refunded", { jobId });
   } else { await updateDoc(env, `generation_jobs/${jobId}`, { status: "processing", crun_response: payload as unknown as Record<string, unknown>, updated_at: Date.now() }); }
   return json({ ok: true, data: { acknowledged: true, matched: true, job_id: jobId } });
@@ -48,4 +52,13 @@ function constantTimeEqual(a: string, b: string): boolean {
   const length = Math.max(aa.length, bb.length);
   for (let i = 0; i < length; i++) diff |= (aa[i] ?? 0) ^ (bb[i] ?? 0);
   return diff === 0;
+}
+
+function isPrivateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace("[", "").replace("]", "");
+  const octets = host.split(".").map((part) => Number(part));
+  const private172 = octets.length === 4 && octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31;
+  return host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal") ||
+    host === "::1" || host.startsWith("10.") || host.startsWith("127.") ||
+    host.startsWith("169.254.") || host.startsWith("192.168.") || private172;
 }

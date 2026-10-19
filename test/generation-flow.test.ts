@@ -5,7 +5,7 @@ import type { TemplateDoc } from "../src/types";
 
 const mockTemplate: TemplateDoc = {
   id: "tpl-video-15s", name: "15s Video", description: "Generate a 15-second AI short video",
-  model_id: "crun-video-v1", active: true, preview_video_url: "https://cdn.example.com/preview.mp4",
+  model_id: "crun-video-v1", is_active: true, preview_video_url: "https://cdn.example.com/preview.mp4",
   base_cost: 10, option_pricing: { duration: { "15": 0, "30": 10 }, quality: { "sd": 0, "hd": 5, "4k": 20 } },
   supported_options: [
     { key: "duration", label: "Duration", type: "select", required: true, allowed_values: ["15", "30"], default: "15" },

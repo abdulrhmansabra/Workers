@@ -5,7 +5,7 @@ import type { TemplateDoc } from "../src/types";
 
 const mockTemplate: TemplateDoc = {
   id: "test-template", name: "Test Template", description: "A test template",
-  model_id: "test-model", active: true, preview_video_url: "https://example.com/preview.mp4",
+  model_id: "test-model", is_active: true, preview_video_url: "https://example.com/preview.mp4",
   base_cost: 10, option_pricing: { duration: { "15": 5, "30": 10 }, quality: { "hd": 0, "4k": 20 } },
   supported_options: [
     { key: "duration", label: "Duration", type: "select", required: true, allowed_values: ["15", "30"], default: "15" },

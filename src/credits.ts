@@ -5,10 +5,18 @@ import { safeError, safeLog, uuid } from "./utils";
 const PRICING_VERSION = "2026-10-19.v1";
 export function getPricingVersion(): string { return PRICING_VERSION; }
 
-export async function debitCreditsForJob(env: Env, uid: string, price: number, templateId: string, modelId: string, options: Record<string, unknown>, inputAssetKeys: string[], idempotencyKey?: string): Promise<{ jobId: string; balanceAfter: number }> {
+export async function debitCreditsForJob(env: Env, uid: string, price: number, templateId: string, modelId: string, providerModelId: string, options: Record<string, unknown>, inputAssetKeys: string[], idempotencyKey?: string): Promise<{ jobId: string; balanceAfter: number; reused: boolean }> {
   if (idempotencyKey) {
+    if (!/^[A-Za-z0-9._:-]{1,128}$/.test(idempotencyKey)) throw new Error("INVALID_IDEMPOTENCY_KEY");
     const existing = await getDoc(env, `generation_idempotency/${idempotencyKey}`);
-    if (existing) { safeLog("Idempotent retry detected", { uid, jobId: existing.data.job_id }); return { jobId: existing.data.job_id as string, balanceAfter: existing.data.balance_after as number }; }
+    if (existing) {
+      if (existing.data.user_id !== uid) throw new Error("IDEMPOTENCY_KEY_CONFLICT");
+      const existingJobId = existing.data.job_id as string;
+      const existingJob = await getDoc(env, `generation_jobs/${existingJobId}`);
+      if (!existingJob || existingJob.data.user_id !== uid) throw new Error("IDEMPOTENCY_RECORD_INVALID");
+      safeLog("Idempotent retry detected", { uid, jobId: existingJobId });
+      return { jobId: existingJobId, balanceAfter: existing.data.balance_after as number, reused: true };
+    }
   }
   const userDocPath = `users/${uid}`;
   const jobId = uuid();
@@ -24,11 +32,11 @@ export async function debitCreditsForJob(env: Env, uid: string, price: number, t
     await commitTransaction(env, txn, [
       { update: { name: docName(userDocPath), fields: { credits: toFirestoreValue(balanceAfter), updated_at: toFirestoreValue(now) } } },
       { update: { name: docName(`credit_ledger/${ledgerId}`), fields: { id: toFirestoreValue(ledgerId), user_id: toFirestoreValue(uid), type: toFirestoreValue("debit"), amount: toFirestoreValue(price), reason: toFirestoreValue("generation"), balance_after: toFirestoreValue(balanceAfter), pricing_version: toFirestoreValue(PRICING_VERSION), job_id: toFirestoreValue(jobId), transaction_id: toFirestoreValue(idempotencyKey ?? jobId), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
-      { update: { name: docName(`generation_jobs/${jobId}`), fields: { id: toFirestoreValue(jobId), user_id: toFirestoreValue(uid), template_id: toFirestoreValue(templateId), model_id: toFirestoreValue(modelId), status: toFirestoreValue("debited"), options: toFirestoreValue(options), input_asset_keys: toFirestoreValue(inputAssetKeys), price: toFirestoreValue(price), pricing_version: toFirestoreValue(PRICING_VERSION), balance_after: toFirestoreValue(balanceAfter), created_at: toFirestoreValue(now), updated_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
-      ...(idempotencyKey ? [{ update: { name: docName(`generation_idempotency/${idempotencyKey}`), fields: { job_id: toFirestoreValue(jobId), user_id: toFirestoreValue(uid), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } }] : []),
+      { update: { name: docName(`generation_jobs/${jobId}`), fields: { id: toFirestoreValue(jobId), user_id: toFirestoreValue(uid), template_id: toFirestoreValue(templateId), model_id: toFirestoreValue(modelId), crun_model_id: toFirestoreValue(providerModelId), status: toFirestoreValue("debited"), options: toFirestoreValue(options), input_asset_keys: toFirestoreValue(inputAssetKeys), price: toFirestoreValue(price), pricing_version: toFirestoreValue(PRICING_VERSION), balance_after: toFirestoreValue(balanceAfter), created_at: toFirestoreValue(now), updated_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
+      ...(idempotencyKey ? [{ update: { name: docName(`generation_idempotency/${idempotencyKey}`), fields: { job_id: toFirestoreValue(jobId), user_id: toFirestoreValue(uid), balance_after: toFirestoreValue(balanceAfter), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } }] : []),
     ]);
     safeLog("Credits debited for job", { uid, jobId, price, balanceAfter });
-    return { jobId, balanceAfter };
+    return { jobId, balanceAfter, reused: false };
   } catch (err) { if (err instanceof InsufficientCreditsError) throw err; safeError("Debit transaction failed", { uid, jobId }); throw err; }
 }
 
@@ -54,7 +62,7 @@ export async function refundCreditsForJob(env: Env, uid: string, jobId: string, 
       await rollbackTransaction(env, txn);
       throw new Error("JOB_OWNER_MISMATCH");
     }
-    if (jobDoc.data.status === "refunded") {
+    if (jobDoc.data.status === "refunded" || jobDoc.data.status === "succeeded") {
       await rollbackTransaction(env, txn);
       return { refunded: false, balanceAfter: (jobDoc.data.balance_after as number) ?? 0 };
     }
@@ -81,26 +89,55 @@ export async function refundCreditsForJob(env: Env, uid: string, jobId: string, 
   }
 }
 
-export async function creditAdReward(env: Env, uid: string, transactionId: string, rewardAmount: number, adUnitId?: string): Promise<{ credited: boolean; balanceAfter: number }> {
-  const existing = await getDoc(env, `ad_reward_events/${transactionId}`);
-  if (existing) { safeLog("Duplicate ad reward", { transactionId }); return { credited: false, balanceAfter: existing.data.balance_after as number }; }
+export async function creditAdReward(env: Env, uid: string, transactionId: string, rewardAmount: number, adUnitId: string | undefined, dailyLimit: number, dailyCreditCap: number): Promise<{ credited: boolean; balanceAfter: number; reason?: string }> {
+  if (!Number.isFinite(rewardAmount) || rewardAmount <= 0 || !Number.isInteger(dailyLimit) || dailyLimit < 1 || !Number.isFinite(dailyCreditCap) || dailyCreditCap < rewardAmount) {
+    throw new Error("INVALID_AD_REWARD_SETTINGS");
+  }
+  const now = Date.now();
+  const day = new Date(now).toISOString().slice(0, 10);
+  const dailyPath = `ad_reward_daily/${uid}_${day}`;
+  const eventPath = `ad_reward_events/${transactionId}`;
   const userDocPath = `users/${uid}`;
   const ledgerId = uuid();
-  const now = Date.now();
   const txn = await beginTransaction(env);
   try {
-    const userDoc = await getDoc(env, userDocPath, txn);
+    const [eventDoc, dailyDoc, userDoc] = await Promise.all([
+      getDoc(env, eventPath, txn),
+      getDoc(env, dailyPath, txn),
+      getDoc(env, userDocPath, txn),
+    ]);
     const currentCredits = (userDoc?.data?.credits as number) ?? 0;
+    if (eventDoc) {
+      await rollbackTransaction(env, txn);
+      return { credited: false, balanceAfter: (eventDoc.data.balance_after as number) ?? currentCredits, reason: "duplicate" };
+    }
+    const currentCount = Number(dailyDoc?.data.count ?? 0);
+    const currentDailyCredits = Number(dailyDoc?.data.total_credits ?? 0);
+    if (currentCount >= dailyLimit || currentDailyCredits + rewardAmount > dailyCreditCap) {
+      await rollbackTransaction(env, txn);
+      return { credited: false, balanceAfter: currentCredits, reason: "daily_limit" };
+    }
     const balanceAfter = currentCredits + rewardAmount;
     const docName = (p: string) => `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${p}`;
+    const dailyFields = {
+      user_id: toFirestoreValue(uid),
+      day: toFirestoreValue(day),
+      count: toFirestoreValue(currentCount + 1),
+      total_credits: toFirestoreValue(currentDailyCredits + rewardAmount),
+      updated_at: toFirestoreValue(now),
+    };
     await commitTransaction(env, txn, [
       { update: { name: docName(userDocPath), fields: { credits: toFirestoreValue(balanceAfter), updated_at: toFirestoreValue(now) } } },
       { update: { name: docName(`credit_ledger/${ledgerId}`), fields: { id: toFirestoreValue(ledgerId), user_id: toFirestoreValue(uid), type: toFirestoreValue("credit"), amount: toFirestoreValue(rewardAmount), reason: toFirestoreValue("ad_reward"), balance_after: toFirestoreValue(balanceAfter), transaction_id: toFirestoreValue(transactionId), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
-      { update: { name: docName(`ad_reward_events/${transactionId}`), fields: { id: toFirestoreValue(transactionId), user_id: toFirestoreValue(uid), transaction_id: toFirestoreValue(transactionId), reward_amount: toFirestoreValue(rewardAmount), ad_unit_id: toFirestoreValue(adUnitId ?? ""), verified: toFirestoreValue(true), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
+      { update: { name: docName(eventPath), fields: { id: toFirestoreValue(transactionId), user_id: toFirestoreValue(uid), transaction_id: toFirestoreValue(transactionId), reward_amount: toFirestoreValue(rewardAmount), ad_unit_id: toFirestoreValue(adUnitId ?? ""), verified: toFirestoreValue(true), balance_after: toFirestoreValue(balanceAfter), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
+      { update: { name: docName(dailyPath), fields: dailyFields }, ...(dailyDoc ? {} : { currentDocument: { exists: false } }) },
     ]);
     safeLog("Ad reward credited", { uid, transactionId, rewardAmount, balanceAfter });
     return { credited: true, balanceAfter };
-  } catch (err) { safeError("Ad reward credit failed", { uid, transactionId }); throw err; }
+  } catch (err) {
+    safeError("Ad reward credit failed", { uid, transactionId });
+    throw err;
+  }
 }
 
 export async function creditPurchase(env: Env, uid: string, purchaseToken: string, productId: string, orderId: string, creditsGranted: number): Promise<{ credited: boolean; balanceAfter: number }> {

@@ -18,7 +18,7 @@ describe("Concurrent request handling: Idempotency keys", () => {
 });
 
 describe("Concurrent request handling: Price consistency", () => {
-  const template: TemplateDoc = { id: "t1", name: "T", description: "", model_id: "m1", active: true, preview_video_url: "", base_cost: 15, option_pricing: { speed: { normal: 0, fast: 10 } }, supported_options: [{ key: "speed", label: "Speed", type: "select", required: true, allowed_values: ["normal", "fast"], default: "normal" }], created_at: 0, updated_at: 0 };
+  const template: TemplateDoc = { id: "t1", name: "T", description: "", model_id: "m1", is_active: true, preview_video_url: "", base_cost: 15, option_pricing: { speed: { normal: 0, fast: 10 } }, supported_options: [{ key: "speed", label: "Speed", type: "select", required: true, allowed_values: ["normal", "fast"], default: "normal" }], created_at: 0, updated_at: 0 };
   it("should produce identical price for same options", () => {
     const opts = { speed: "fast" };
     const prices = new Set<number>();

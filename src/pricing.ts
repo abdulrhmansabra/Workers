@@ -59,7 +59,8 @@ export async function getValidTemplate(env: Env, templateId: string): Promise<Te
   const template = doc.data as unknown as TemplateDoc;
   template.id = doc.id;
   if (!template.is_active) throw new HttpError(400, "TEMPLATE_INACTIVE", "This template is no longer available");
-  if (!ALLOWED_MODELS.has(template.model_id)) throw new HttpError(400, "MODEL_NOT_ALLOWED", `Template references an unapproved model: ${template.model_id}`);
+  const modelDoc = await getDoc(env, `models/${template.model_id}`);
+  if (!modelDoc || modelDoc.data.is_active !== true || String(modelDoc.data.provider ?? "").toLowerCase() !== "crun" || typeof modelDoc.data.provider_model_id !== "string" || !modelDoc.data.provider_model_id.trim()) throw new HttpError(400, "MODEL_NOT_ALLOWED", "Template model is not an active, configured Crun.ai model");
   return template;
 }
 
