@@ -33,27 +33,52 @@ export async function debitCreditsForJob(env: Env, uid: string, price: number, t
 }
 
 export async function refundCreditsForJob(env: Env, uid: string, jobId: string, price: number, reason: string): Promise<{ refunded: boolean; balanceAfter: number }> {
-  const jobDoc = await getDoc(env, `jobs/${jobId}`);
-  if (!jobDoc) throw new Error("JOB_NOT_FOUND");
-  if (jobDoc.data.status === "refunded") { safeLog("Job already refunded", { jobId }); return { refunded: false, balanceAfter: jobDoc.data.balance_after as number }; }
   const userDocPath = `users/${uid}`;
+  const jobDocPath = `jobs/${jobId}`;
   const ledgerId = uuid();
   const now = Date.now();
   const txn = await beginTransaction(env);
   try {
-    const userDoc = await getDoc(env, userDocPath, txn);
+    // Read both documents in the same Firestore transaction. This makes the
+    // refunded status and the balance/ledger update compete on the same job
+    // document, preventing two concurrent callbacks from refunding twice.
+    const [jobDoc, userDoc] = await Promise.all([
+      getDoc(env, jobDocPath, txn),
+      getDoc(env, userDocPath, txn),
+    ]);
+    if (!jobDoc) {
+      await rollbackTransaction(env, txn);
+      throw new Error("JOB_NOT_FOUND");
+    }
+    if (jobDoc.data.uid !== uid) {
+      await rollbackTransaction(env, txn);
+      throw new Error("JOB_OWNER_MISMATCH");
+    }
+    if (jobDoc.data.status === "refunded") {
+      await rollbackTransaction(env, txn);
+      return { refunded: false, balanceAfter: (jobDoc.data.balance_after as number) ?? 0 };
+    }
+    const actualPrice = Number(jobDoc.data.price);
+    if (!Number.isFinite(actualPrice) || actualPrice < 0 || !Number.isFinite(price) || price < 0) {
+      await rollbackTransaction(env, txn);
+      throw new Error("INVALID_REFUND_AMOUNT");
+    }
+    // Always refund the server-recorded job price, never a caller-supplied amount.
+    const refundAmount = actualPrice;
     const currentCredits = (userDoc?.data?.credits as number) ?? 0;
-    const balanceAfter = currentCredits + price;
+    const balanceAfter = currentCredits + refundAmount;
     const docName = (p: string) => `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${p}`;
     await commitTransaction(env, txn, [
       { update: { name: docName(userDocPath), fields: { credits: toFirestoreValue(balanceAfter), updated_at: toFirestoreValue(now) } } },
-      { update: { name: docName(`ledger/${ledgerId}`), fields: { id: toFirestoreValue(ledgerId), uid: toFirestoreValue(uid), type: toFirestoreValue("credit"), amount: toFirestoreValue(price), reason: toFirestoreValue(`refund:${reason}`), balance_after: toFirestoreValue(balanceAfter), job_id: toFirestoreValue(jobId), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
+      { update: { name: docName(`ledger/${ledgerId}`), fields: { id: toFirestoreValue(ledgerId), uid: toFirestoreValue(uid), type: toFirestoreValue("credit"), amount: toFirestoreValue(refundAmount), reason: toFirestoreValue(`refund:${reason}`), balance_after: toFirestoreValue(balanceAfter), job_id: toFirestoreValue(jobId), transaction_id: toFirestoreValue(`refund:${jobId}`), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
+      { update: { name: docName(jobDocPath), fields: { status: toFirestoreValue("refunded"), updated_at: toFirestoreValue(now), balance_after: toFirestoreValue(balanceAfter) } } },
     ]);
-    const { updateDoc } = await import("./firestore");
-    await updateDoc(env, `jobs/${jobId}`, { status: "refunded", updated_at: now, balance_after: balanceAfter });
-    safeLog("Credits refunded for job", { uid, jobId, price, balanceAfter });
+    safeLog("Credits refunded for job", { uid, jobId, refundAmount, balanceAfter });
     return { refunded: true, balanceAfter };
-  } catch (err) { safeError("Refund transaction failed", { uid, jobId }); throw err; }
+  } catch (err) {
+    safeError("Refund transaction failed", { uid, jobId });
+    throw err;
+  }
 }
 
 export async function creditAdReward(env: Env, uid: string, transactionId: string, rewardAmount: number, adUnitId?: string): Promise<{ credited: boolean; balanceAfter: number }> {
