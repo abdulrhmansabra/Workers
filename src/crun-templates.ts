@@ -36,7 +36,7 @@ function identity(provider: CatalogProvider, item: RecordValue): { key: string; 
     providerId,
     name,
     cover: string(item.cover_url ?? item.Cover ?? item.cover ?? item.coverUrl),
-    preview: string(item.video_url ?? item.PreviewVideo ?? item.preview_video_url ?? item.previewVideo),
+    preview: string(item.video_url ?? item.PreviewVideo ?? item.preview_video_url ?? item.previewVideo ?? item.video),
   };
 }
 async function requestCatalog(env: Env, path: string, page: number): Promise<RecordValue> {
@@ -81,7 +81,7 @@ export async function syncCrunTemplateCatalog(env: Env): Promise<{ providers: nu
             category: string(item.category ?? item.Category ?? item.TemplateType),
             cover_url: info.cover,
             preview_video_url: info.preview,
-            provider_cost: Number(item.credit ?? item.Credit ?? (Array.isArray(item.ConsumeItems) ? object(item.ConsumeItems[0]).Credit : 0)) || 0,
+            provider_cost: Number(item.credit ?? item.credits ?? item.Credit ?? (Array.isArray(item.ConsumeItems) ? object(item.ConsumeItems[0]).Credit : 0)) || 0,
             raw_catalog: item,
             last_synced_at: Date.now(),
           };
