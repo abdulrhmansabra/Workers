@@ -34,7 +34,7 @@ export const crunWebhookHandler: RouteHandler = async (request, env: Env) => {
     } catch { safeError("Webhook: download failed", { jobId }); throw new HttpError(500, "DOWNLOAD_FAILED", "Failed to download result"); }
   } else if (payload.status === "failed") {
     try { await refundCreditsForJob(env, uid, jobId, job.price, "crun_webhook_failed"); } catch { safeError("Webhook: refund failed", { jobId }); }
-    await updateDoc(env, `generation_jobs/${jobId}`, { status: "failed", error: payload.error ?? "CRUN_WEBHOOK_FAILED", completed_at: Date.now(), updated_at: Date.now() });
+    await updateDoc(env, `generation_jobs/${jobId}`, { error: payload.error ?? "CRUN_WEBHOOK_FAILED", completed_at: Date.now(), updated_at: Date.now() });
     safeLog("Webhook: job failed, refunded", { jobId });
   } else { await updateDoc(env, `generation_jobs/${jobId}`, { status: "processing", crun_response: payload as unknown as Record<string, unknown>, updated_at: Date.now() }); }
   return json({ ok: true, data: { acknowledged: true, matched: true, job_id: jobId } });
