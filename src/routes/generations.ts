@@ -66,13 +66,15 @@ export const getGenerationHandler: RouteHandler = async (request, env: Env, ctx,
       const adapter = getAdapter(job.crun_model_id ?? job.model_id);
       const status = await adapter.getJobStatus(job.crun_job_id, env);
       if (status.status === "succeeded" && status.result_url) {
-        const resp = await fetch(status.result_url);
-        if (!resp.ok || !resp.body) throw new Error("CRUN_RESULT_DOWNLOAD_FAILED");
-        const contentType = resp.headers.get("content-type")?.split(";")[0] ?? "video/mp4";
-        const ext = contentType === "image/png" ? "png" : contentType === "image/jpeg" ? "jpg" : contentType === "image/webp" ? "webp" : "mp4";
-        const resultKey = `outputs/${auth.uid}/${jobId}.${ext}`;
-        await env.R2_BUCKET.put(resultKey, resp.body, { httpMetadata: { contentType }, customMetadata: { owner_uid: auth.uid } });
-        await updateDoc(env, `generation_jobs/${jobId}`, { status: "succeeded", output_asset_key: resultKey, crun_response: status.raw, completed_at: Date.now(), updated_at: Date.now() });
+        // Return the provider-hosted result URL instead of downloading and duplicating
+        // the generated media in R2. Only expose absolute HTTPS URLs without credentials.
+        let resultUrl: URL;
+        try { resultUrl = new URL(status.result_url); }
+        catch { throw new Error("CRUN_RESULT_URL_INVALID"); }
+        if (resultUrl.protocol !== "https:" || resultUrl.username || resultUrl.password) {
+          throw new Error("CRUN_RESULT_URL_INVALID");
+        }
+        await updateDoc(env, `generation_jobs/${jobId}`, { status: "succeeded", output_url: resultUrl.toString(), crun_response: status.raw, completed_at: Date.now(), updated_at: Date.now() });
       } else if (status.status === "failed") {
         await refundCreditsForJob(env, auth.uid, jobId, job.price, "crun_job_failed");
         await updateDoc(env, `generation_jobs/${jobId}`, { error: status.error ?? "CRUN_JOB_FAILED", completed_at: Date.now(), updated_at: Date.now() });
@@ -85,5 +87,5 @@ export const getGenerationHandler: RouteHandler = async (request, env: Env, ctx,
 };
 
 function sanitizeJob(job: JobDoc): Partial<JobDoc> {
-  return { id: job.id, template_id: job.template_id, model_id: job.model_id, status: job.status, crun_model_id: job.crun_model_id, options: job.options, price: job.price, pricing_version: job.pricing_version, output_asset_key: job.output_asset_key, error: job.error, created_at: job.created_at, updated_at: job.updated_at, completed_at: job.completed_at };
+  return { id: job.id, template_id: job.template_id, model_id: job.model_id, status: job.status, crun_model_id: job.crun_model_id, options: job.options, price: job.price, pricing_version: job.pricing_version, output_asset_key: job.output_asset_key, output_url: job.output_url, error: job.error, created_at: job.created_at, updated_at: job.updated_at, completed_at: job.completed_at };
 }
