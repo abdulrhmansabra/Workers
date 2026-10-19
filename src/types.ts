@@ -89,6 +89,7 @@ export interface JobDoc {
   uid: string;
   template_id: string;
   model_id: string;
+  crun_model_id?: string;
   status: JobStatus;
   options: Record<string, unknown>;
   input_asset_keys: string[];
