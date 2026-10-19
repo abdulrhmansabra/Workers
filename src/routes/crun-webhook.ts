@@ -6,6 +6,13 @@ import { refundCreditsForJob } from "../credits";
 import type { RouteHandler } from "../router";
 
 export const crunWebhookHandler: RouteHandler = async (request, env: Env) => {
+  // Crun callbacks must prove knowledge of a server-only secret before any
+  // job lookup, status change, media download, or refund is allowed.
+  const configuredSecret = env.CRUN_WEBHOOK_SECRET;
+  const suppliedSecret = new URL(request.url).searchParams.get("token");
+  if (!configuredSecret || !suppliedSecret || !constantTimeEqual(configuredSecret, suppliedSecret)) {
+    throw new HttpError(401, "INVALID_WEBHOOK_AUTH", "Webhook authentication failed");
+  }
   const body = await parseJsonBody(request);
   let payload;
   try { payload = parseWebhookPayload(body); } catch { throw new HttpError(400, "INVALID_WEBHOOK", "Invalid webhook payload"); }
@@ -32,3 +39,13 @@ export const crunWebhookHandler: RouteHandler = async (request, env: Env) => {
   } else { await updateDoc(env, `jobs/${jobId}`, { status: "processing", crun_response: payload as unknown as Record<string, unknown>, updated_at: Date.now() }); }
   return json({ ok: true, data: { acknowledged: true, matched: true, job_id: jobId } });
 };
+
+function constantTimeEqual(a: string, b: string): boolean {
+  const encoder = new TextEncoder();
+  const aa = encoder.encode(a);
+  const bb = encoder.encode(b);
+  let diff = aa.length ^ bb.length;
+  const length = Math.max(aa.length, bb.length);
+  for (let i = 0; i < length; i++) diff |= (aa[i] ?? 0) ^ (bb[i] ?? 0);
+  return diff === 0;
+}
