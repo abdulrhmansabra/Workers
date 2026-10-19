@@ -78,7 +78,7 @@ export async function syncCrunTemplateCatalog(env: Env): Promise<{ providers: nu
             provider: source.provider,
             provider_template_id: info.providerId,
             name: info.name,
-            category: string(item.category ?? item.Category ?? item.TemplateType),
+            category: string(item.category ?? item.category_name ?? item.Category ?? item.TemplateType),
             cover_url: info.cover,
             preview_video_url: info.preview,
             provider_cost: Number(item.credit ?? item.credits ?? item.Credit ?? (Array.isArray(item.ConsumeItems) ? object(item.ConsumeItems[0]).Credit : 0)) || 0,
