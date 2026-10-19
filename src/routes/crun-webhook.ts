@@ -25,17 +25,24 @@ export const crunWebhookHandler: RouteHandler = async (request, env: Env) => {
   const job = jobDoc.data as unknown as JobDoc;
   if (payload.status === "succeeded" && payload.result_url) {
     try {
+      // Keep webhook completion consistent with polling: return CRUN's hosted URL
+      // rather than downloading the generated media and storing a duplicate in R2.
       const resultUrl = new URL(payload.result_url);
-      if (resultUrl.protocol !== "https:" || isPrivateHost(resultUrl.hostname)) throw new Error("INVALID_RESULT_URL");
-      const resp = await fetch(resultUrl.toString());
-      if (!resp.ok || !resp.body) throw new Error("DOWNLOAD_FAILED");
-      const contentType = resp.headers.get("content-type")?.split(";")[0] ?? "video/mp4";
-      const ext = contentType === "image/png" ? "png" : contentType === "image/jpeg" ? "jpg" : contentType === "image/webp" ? "webp" : "mp4";
-      const resultKey = `outputs/${uid}/${jobId}.${ext}`;
-      await env.R2_BUCKET.put(resultKey, resp.body, { httpMetadata: { contentType }, customMetadata: { owner_uid: uid } });
-      await updateDoc(env, `generation_jobs/${jobId}`, { status: "succeeded", output_asset_key: resultKey, crun_response: payload as unknown as Record<string, unknown>, completed_at: Date.now(), updated_at: Date.now() });
+      if (resultUrl.protocol !== "https:" || resultUrl.username || resultUrl.password || isPrivateHost(resultUrl.hostname)) {
+        throw new Error("INVALID_RESULT_URL");
+      }
+      await updateDoc(env, `generation_jobs/${jobId}`, {
+        status: "succeeded",
+        output_url: resultUrl.toString(),
+        crun_response: payload as unknown as Record<string, unknown>,
+        completed_at: Date.now(),
+        updated_at: Date.now(),
+      });
       safeLog("Webhook: job succeeded", { jobId });
-    } catch { safeError("Webhook: download failed", { jobId }); throw new HttpError(500, "DOWNLOAD_FAILED", "Failed to download result"); }
+    } catch {
+      safeError("Webhook: result URL invalid", { jobId });
+      throw new HttpError(400, "INVALID_RESULT_URL", "Invalid result URL");
+    }
   } else if (payload.status === "failed") {
     try { await refundCreditsForJob(env, uid, jobId, job.price, "crun_webhook_failed"); } catch { safeError("Webhook: refund failed", { jobId }); }
     await updateDoc(env, `generation_jobs/${jobId}`, { error: payload.error ?? "CRUN_WEBHOOK_FAILED", completed_at: Date.now(), updated_at: Date.now() });
