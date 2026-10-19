@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: ["fix/firestore-security-credits"]
+    branches: ["fix/ai-shorts-validation"]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
