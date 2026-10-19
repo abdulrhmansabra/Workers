@@ -43,7 +43,7 @@ export interface UserCredits {
 
 export interface LedgerEntry {
   id: string;
-  uid: string;
+  user_id: string;
   type: "debit" | "credit";
   amount: number;
   reason: string;
@@ -86,7 +86,7 @@ export type JobStatus =
 
 export interface JobDoc {
   id: string;
-  uid: string;
+  user_id: string;
   template_id: string;
   model_id: string;
   crun_model_id?: string;
@@ -108,7 +108,7 @@ export interface JobDoc {
 
 export interface AdRewardEvent {
   id: string;
-  uid: string;
+  user_id: string;
   transaction_id: string;
   reward_amount: number;
   ad_unit_id?: string;
