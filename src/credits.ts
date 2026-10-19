@@ -5,7 +5,7 @@ import { safeError, safeLog, uuid } from "./utils";
 const PRICING_VERSION = "2026-10-19.v1";
 export function getPricingVersion(): string { return PRICING_VERSION; }
 
-export async function debitCreditsForJob(env: Env, uid: string, price: number, templateId: string, modelId: string, providerModelId: string, options: Record<string, unknown>, inputAssetKeys: string[], idempotencyKey?: string): Promise<{ jobId: string; balanceAfter: number }> {
+export async function debitCreditsForJob(env: Env, uid: string, price: number, templateId: string, modelId: string, providerModelId: string, options: Record<string, unknown>, inputAssetKeys: string[], idempotencyKey?: string): Promise<{ jobId: string; balanceAfter: number; reused: boolean }> {
   if (idempotencyKey) {
     if (!/^[A-Za-z0-9._:-]{1,128}$/.test(idempotencyKey)) throw new Error("INVALID_IDEMPOTENCY_KEY");
     const existing = await getDoc(env, `generation_idempotency/${idempotencyKey}`);
@@ -15,7 +15,7 @@ export async function debitCreditsForJob(env: Env, uid: string, price: number, t
       const existingJob = await getDoc(env, `generation_jobs/${existingJobId}`);
       if (!existingJob || existingJob.data.user_id !== uid) throw new Error("IDEMPOTENCY_RECORD_INVALID");
       safeLog("Idempotent retry detected", { uid, jobId: existingJobId });
-      return { jobId: existingJobId, balanceAfter: existing.data.balance_after as number };
+      return { jobId: existingJobId, balanceAfter: existing.data.balance_after as number, reused: true };
     }
   }
   const userDocPath = `users/${uid}`;
@@ -36,7 +36,7 @@ export async function debitCreditsForJob(env: Env, uid: string, price: number, t
       ...(idempotencyKey ? [{ update: { name: docName(`generation_idempotency/${idempotencyKey}`), fields: { job_id: toFirestoreValue(jobId), user_id: toFirestoreValue(uid), balance_after: toFirestoreValue(balanceAfter), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } }] : []),
     ]);
     safeLog("Credits debited for job", { uid, jobId, price, balanceAfter });
-    return { jobId, balanceAfter };
+    return { jobId, balanceAfter, reused: false };
   } catch (err) { if (err instanceof InsufficientCreditsError) throw err; safeError("Debit transaction failed", { uid, jobId }); throw err; }
 }
 
@@ -62,7 +62,7 @@ export async function refundCreditsForJob(env: Env, uid: string, jobId: string, 
       await rollbackTransaction(env, txn);
       throw new Error("JOB_OWNER_MISMATCH");
     }
-    if (jobDoc.data.status === "refunded") {
+    if (jobDoc.data.status === "refunded" || jobDoc.data.status === "succeeded") {
       await rollbackTransaction(env, txn);
       return { refunded: false, balanceAfter: (jobDoc.data.balance_after as number) ?? 0 };
     }
