@@ -81,7 +81,7 @@ export async function createTemplateJob(
     input.img_urls = imageUrls;
   } else {
     input.template = templateId;
-    input.images = imageUrls.length === 1 ? imageUrls[0] : imageUrls;
+    input.images = imageUrls;
   }
   const model = provider + "/template";
   const requestBody: Record<string, unknown> = { model, input };
