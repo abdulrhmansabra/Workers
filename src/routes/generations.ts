@@ -1,4 +1,4 @@
-import type { Env, JobDoc, JobStatus } from "../types";
+import type { Env, JobDoc, JobStatus, CrunCreateJobResult } from "../types";
 import { json, HttpError, parseJsonBody, safeLog, safeError } from "../utils";
 import { getValidTemplate, validateOptions, calculatePrice } from "../pricing";
 import { getPricingVersion, debitCreditsForJob, refundCreditsForJob, InsufficientCreditsError } from "../credits";
@@ -29,7 +29,7 @@ export const createGenerationHandler: RouteHandler = async (request, env: Env) =
     if (!existing || existing.data.user_id !== auth.uid) throw new HttpError(409, "IDEMPOTENCY_CONFLICT", "The idempotency key is already in use");
     return json({ ok: true, data: { job_id: jobId, status: existing.data.status, price: existing.data.price, pricing_version: existing.data.pricing_version } });
   }
-  let crunResult;
+  let crunResult: CrunCreateJobResult;
   try {
     const adapter = getAdapter(providerModelId);
     crunResult = await adapter.createJob({ model_id: providerModelId, options: body.options ?? {}, image_asset_keys: body.input_asset_keys, reference_video_url: template.reference_video_url, webhook_url: env.WORKER_BASE_URL && env.CRUN_WEBHOOK_SECRET ? `${env.WORKER_BASE_URL.replace(/\\/$/, "")}/v1/crun-webhook?token=${encodeURIComponent(env.CRUN_WEBHOOK_SECRET)}` : undefined }, env);
@@ -66,9 +66,12 @@ export const getGenerationHandler: RouteHandler = async (request, env: Env, ctx,
       const adapter = getAdapter(job.crun_model_id ?? job.model_id);
       const status = await adapter.getJobStatus(job.crun_job_id, env);
       if (status.status === "succeeded" && status.result_url) {
-        const resultKey = `outputs/${auth.uid}/${jobId}.mp4`;
         const resp = await fetch(status.result_url);
-        if (resp.ok && resp.body) await env.R2_BUCKET.put(resultKey, resp.body, { httpMetadata: { contentType: "video/mp4" }, customMetadata: { owner_uid: auth.uid } });
+        if (!resp.ok || !resp.body) throw new Error("CRUN_RESULT_DOWNLOAD_FAILED");
+        const contentType = resp.headers.get("content-type")?.split(";")[0] ?? "video/mp4";
+        const ext = contentType === "image/png" ? "png" : contentType === "image/jpeg" ? "jpg" : contentType === "image/webp" ? "webp" : "mp4";
+        const resultKey = `outputs/${auth.uid}/${jobId}.${ext}`;
+        await env.R2_BUCKET.put(resultKey, resp.body, { httpMetadata: { contentType }, customMetadata: { owner_uid: auth.uid } });
         await updateDoc(env, `generation_jobs/${jobId}`, { status: "succeeded", output_asset_key: resultKey, crun_response: status.raw, completed_at: Date.now(), updated_at: Date.now() });
       } else if (status.status === "failed") {
         await refundCreditsForJob(env, auth.uid, jobId, job.price, "crun_job_failed");
