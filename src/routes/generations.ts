@@ -2,7 +2,7 @@ import type { Env, JobDoc, JobStatus, CrunCreateJobResult } from "../types";
 import { json, HttpError, parseJsonBody, safeLog, safeError } from "../utils";
 import { getValidTemplate, validateOptions, calculatePrice } from "../pricing";
 import { getPricingVersion, debitCreditsForJob, refundCreditsForJob, InsufficientCreditsError } from "../credits";
-import { getAdapter } from "../crun";
+import { getAdapter, createTemplateJob } from "../crun";
 import { getDoc, updateDoc, setDoc } from "../firestore";
 import { requireAuth } from "../middleware/auth";
 import type { RouteHandler } from "../router";
@@ -18,11 +18,20 @@ export const createGenerationHandler: RouteHandler = async (request, env: Env) =
   validateOptions(template, body.options ?? {});
   const breakdown = calculatePrice(template, body.options ?? {});
   for (const key of body.input_asset_keys) { if (typeof key !== "string" || !key.includes(`/${auth.uid}/`)) throw new HttpError(403, "ASSET_NOT_OWNED", `You do not own asset: ${key}`); }
-  const modelDoc = await getDoc(env, `models/${template.model_id}`);
-  const providerModelId = modelDoc?.data.provider_model_id;
-  if (typeof providerModelId !== "string" || !providerModelId.trim()) throw new HttpError(400, "MODEL_NOT_CONFIGURED", "This Crun model is missing its provider model ID");
+  let providerModelId: string;
+  if (template.crun_provider && template.crun_template_id) {
+    providerModelId = template.crun_provider + "/template";
+  } else if (template.model_id) {
+    const modelDoc = await getDoc(env, `models/${template.model_id}`);
+    const configuredId = modelDoc?.data.provider_model_id;
+    if (typeof configuredId !== "string" || !configuredId.trim()) throw new HttpError(400, "MODEL_NOT_CONFIGURED", "This Crun model is missing its provider model ID");
+    providerModelId = configuredId;
+  } else {
+    throw new HttpError(400, "TEMPLATE_NOT_CONFIGURED", "Template provider settings are missing");
+  }
+  const storedModelId = template.model_id ?? providerModelId;
   let jobId: string; let balanceAfter: number; let reused: boolean;
-  try { const result = await debitCreditsForJob(env, auth.uid, breakdown.total, template.id, template.model_id, providerModelId, body.options ?? {}, body.input_asset_keys, body.idempotency_key); jobId = result.jobId; balanceAfter = result.balanceAfter; reused = result.reused; }
+  try { const result = await debitCreditsForJob(env, auth.uid, breakdown.total, template.id, storedModelId, providerModelId, body.options ?? {}, body.input_asset_keys, body.idempotency_key); jobId = result.jobId; balanceAfter = result.balanceAfter; reused = result.reused; }
   catch (err) { if (err instanceof InsufficientCreditsError) throw new HttpError(402, "INSUFFICIENT_CREDITS", err.message); throw err; }
   if (reused) {
     const existing = await getDoc(env, `generation_jobs/${jobId}`);
@@ -31,8 +40,13 @@ export const createGenerationHandler: RouteHandler = async (request, env: Env) =
   }
   let crunResult: CrunCreateJobResult;
   try {
-    const adapter = getAdapter(providerModelId);
-    crunResult = await adapter.createJob({ model_id: providerModelId, options: body.options ?? {}, image_asset_keys: body.input_asset_keys, reference_video_url: template.reference_video_url, webhook_url: env.WORKER_BASE_URL && env.CRUN_WEBHOOK_SECRET ? `${env.WORKER_BASE_URL.replace(/\/$/, "")}/v1/crun-webhook?token=${encodeURIComponent(env.CRUN_WEBHOOK_SECRET)}` : undefined }, env);
+    const webhookUrl = env.WORKER_BASE_URL && env.CRUN_WEBHOOK_SECRET ? `${env.WORKER_BASE_URL.replace(/\/$/, "")}/v1/crun-webhook?token=${encodeURIComponent(env.CRUN_WEBHOOK_SECRET)}` : undefined;
+    if (template.crun_provider && template.crun_template_id) {
+      crunResult = await createTemplateJob(template.crun_provider, template.crun_template_id, body.input_asset_keys, body.options ?? {}, env, webhookUrl);
+    } else {
+      const adapter = getAdapter(providerModelId);
+      crunResult = await adapter.createJob({ model_id: providerModelId, options: body.options ?? {}, image_asset_keys: body.input_asset_keys, reference_video_url: template.reference_video_url, webhook_url: webhookUrl }, env);
+    }
   } catch (err) {
     safeError("Crun submission failed, refunding", { jobId });
     try { await refundCreditsForJob(env, auth.uid, jobId, breakdown.total, "crun_submit_failed"); } catch { safeError("Refund also failed", { jobId }); }
