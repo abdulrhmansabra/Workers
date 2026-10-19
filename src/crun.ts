@@ -61,7 +61,6 @@ class GenericCrunAdapter implements CrunModelAdapter {
     const taskInput: Record<string, unknown> = { ...input.options };
     const prompt = input.prompt ?? (typeof input.options.prompt === "string" ? input.options.prompt : undefined);
     if (prompt) taskInput.prompt = prompt;
-    delete taskInput.prompt;
     if (prompt) taskInput.prompt = prompt;
     if (input.image_asset_keys?.length) {
       const publicBase = (env.R2_PUBLIC_BASE_URL ?? "").replace(/\\/+$/, "");
