@@ -71,7 +71,7 @@ function base64UrlToBytes(input: string): Uint8Array {
 export class SSVError extends Error { constructor(public code: string, message: string) { super(message); this.name = "SSVError"; } }
 
 export interface AdRewardSettings { reward_amount: number; daily_limit: number; daily_credit_cap: number; }
-export const DEFAULT_AD_REWARD_SETTINGS: AdRewardSettings = { reward_amount: 5, daily_limit: 20, daily_credit_cap: 100 };
+export const DEFAULT_AD_REWARD_SETTINGS: AdRewardSettings = { reward_amount: 10, daily_limit: 4, daily_credit_cap: 40 };
 
 export async function checkDailyLimit(env: Env, uid: string, settings: AdRewardSettings): Promise<boolean> {
   const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0); const startMs = startOfDay.getTime();
