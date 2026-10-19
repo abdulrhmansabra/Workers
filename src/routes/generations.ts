@@ -65,5 +65,5 @@ export const getGenerationHandler: RouteHandler = async (request, env: Env, ctx,
 };
 
 function sanitizeJob(job: JobDoc): Partial<JobDoc> {
-  return { id: job.id, template_id: job.template_id, model_id: job.model_id, status: job.status, options: job.options, price: job.price, pricing_version: job.pricing_version, error: job.error, created_at: job.created_at, updated_at: job.updated_at, completed_at: job.completed_at };
+  return { id: job.id, template_id: job.template_id, model_id: job.model_id, status: job.status, options: job.options, price: job.price, pricing_version: job.pricing_version, output_asset_key: job.output_asset_key, error: job.error, created_at: job.created_at, updated_at: job.updated_at, completed_at: job.completed_at };
 }
