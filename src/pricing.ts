@@ -58,7 +58,7 @@ export async function getValidTemplate(env: Env, templateId: string): Promise<Te
   if (!doc) throw new HttpError(404, "TEMPLATE_NOT_FOUND", `Template not found: ${templateId}`);
   const template = doc.data as unknown as TemplateDoc;
   template.id = doc.id;
-  if (!template.active) throw new HttpError(400, "TEMPLATE_INACTIVE", "This template is no longer available");
+  if (!template.is_active) throw new HttpError(400, "TEMPLATE_INACTIVE", "This template is no longer available");
   if (!ALLOWED_MODELS.has(template.model_id)) throw new HttpError(400, "MODEL_NOT_ALLOWED", `Template references an unapproved model: ${template.model_id}`);
   return template;
 }
