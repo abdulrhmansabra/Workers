@@ -55,6 +55,43 @@ async function crunRequest(env: Env, method: string, path: string, body?: unknow
   } finally { clearTimeout(timeout); }
 }
 
+export async function createTemplateJob(
+  provider: "kling" | "bytedance" | "vidu",
+  templateId: string,
+  inputAssetKeys: string[],
+  options: Record<string, unknown>,
+  env: Env,
+  webhookUrl?: string,
+): Promise<CrunCreateJobResult> {
+  const publicBase = (env.R2_PUBLIC_BASE_URL ?? "").replace(/\\/+$/, "");
+  if (!publicBase) throw new Error("R2_PUBLIC_BASE_URL_REQUIRED_FOR_IMAGE_INPUT");
+  if (inputAssetKeys.length === 0) throw new Error("TEMPLATE_IMAGE_REQUIRED");
+  const imageUrls = inputAssetKeys.map((key) =>
+    publicBase + "/" + key.split("/").map(encodeURIComponent).join("/"),
+  );
+  const input: Record<string, unknown> = { ...options };
+  delete input.template_id;
+  delete input.img_urls;
+  delete input.images;
+  if (provider === "kling") {
+    input.template_id = templateId;
+    input.img_urls = imageUrls;
+  } else if (provider === "bytedance") {
+    input.template_id = templateId;
+    input.img_urls = imageUrls;
+  } else {
+    input.template = templateId;
+    input.images = imageUrls.length === 1 ? imageUrls[0] : imageUrls;
+  }
+  const model = provider + "/template";
+  const requestBody: Record<string, unknown> = { model, input };
+  if (webhookUrl) requestBody.callback_url = webhookUrl;
+  const raw = await crunRequest(env, "POST", "/api/v1/client/job/CreateTask", requestBody);
+  const taskId = raw.task_id ?? raw.id;
+  if (typeof taskId !== "string" || !taskId) throw new Error("CRUN_TASK_ID_MISSING");
+  return { crun_job_id: taskId, status: normalizeStatus(raw.status), raw };
+}
+
 class GenericCrunAdapter implements CrunModelAdapter {
   constructor(public readonly model_id: string) {}
   async createJob(input: CrunCreateJobInput, env: Env): Promise<CrunCreateJobResult> {
