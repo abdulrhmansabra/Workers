@@ -42,7 +42,7 @@ export const getGenerationHandler: RouteHandler = async (request, env: Env, ctx,
   if (!jobId) throw new HttpError(400, "MISSING_PARAM", "jobId is required");
   const jobDoc = await getDoc(env, `generation_jobs/${jobId}`);
   if (!jobDoc) throw new HttpError(404, "JOB_NOT_FOUND", "Job not found");
-  if (jobDoc.data.uid !== auth.uid) throw new HttpError(403, "FORBIDDEN", "You do not own this job");
+  if (jobDoc.data.user_id !== auth.uid) throw new HttpError(403, "FORBIDDEN", "You do not own this job");
   const job = jobDoc.data as unknown as JobDoc;
   if ((job.status === "submitted" || job.status === "processing") && job.crun_job_id) {
     try {
