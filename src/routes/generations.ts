@@ -21,9 +21,14 @@ export const createGenerationHandler: RouteHandler = async (request, env: Env) =
   const modelDoc = await getDoc(env, `models/${template.model_id}`);
   const providerModelId = modelDoc?.data.provider_model_id;
   if (typeof providerModelId !== "string" || !providerModelId.trim()) throw new HttpError(400, "MODEL_NOT_CONFIGURED", "This Crun model is missing its provider model ID");
-  let jobId: string; let balanceAfter: number;
-  try { const result = await debitCreditsForJob(env, auth.uid, breakdown.total, template.id, template.model_id, providerModelId, body.options ?? {}, body.input_asset_keys, body.idempotency_key); jobId = result.jobId; balanceAfter = result.balanceAfter; }
+  let jobId: string; let balanceAfter: number; let reused: boolean;
+  try { const result = await debitCreditsForJob(env, auth.uid, breakdown.total, template.id, template.model_id, providerModelId, body.options ?? {}, body.input_asset_keys, body.idempotency_key); jobId = result.jobId; balanceAfter = result.balanceAfter; reused = result.reused; }
   catch (err) { if (err instanceof InsufficientCreditsError) throw new HttpError(402, "INSUFFICIENT_CREDITS", err.message); throw err; }
+  if (reused) {
+    const existing = await getDoc(env, `generation_jobs/${jobId}`);
+    if (!existing || existing.data.user_id !== auth.uid) throw new HttpError(409, "IDEMPOTENCY_CONFLICT", "The idempotency key is already in use");
+    return json({ ok: true, data: { job_id: jobId, status: existing.data.status, price: existing.data.price, pricing_version: existing.data.pricing_version } });
+  }
   try {
     const adapter = getAdapter(providerModelId);
     const crunResult = await adapter.createJob({ model_id: template.model_id, options: body.options ?? {}, image_asset_keys: body.input_asset_keys, reference_video_url: template.reference_video_url, webhook_url: env.WORKER_BASE_URL && env.CRUN_WEBHOOK_SECRET ? `${env.WORKER_BASE_URL.replace(/\\/$/, "")}/v1/crun-webhook?token=${encodeURIComponent(env.CRUN_WEBHOOK_SECRET)}` : undefined }, env);
