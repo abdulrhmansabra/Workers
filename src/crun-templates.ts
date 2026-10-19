@@ -43,7 +43,8 @@ async function requestCatalog(env: Env, path: string, page: number): Promise<Rec
   if (!env.CRUN_API_KEY) throw new Error("CRUN_API_KEY is not configured");
   const base = (env.CRUN_BASE_URL || "https://api.crun.ai").replace(/\/+$/, "");
   const separator = path.includes("?") ? "&" : "?";
-  const response = await fetch(base + path + separator + "page=" + page + "&page_size=50&language=en", {
+  const language = path.includes("kling-templates") ? "&language=en" : "";
+  const response = await fetch(base + path + separator + "page=" + page + "&page_size=50" + language, {
     headers: { "X-API-KEY": env.CRUN_API_KEY, Accept: "application/json" },
   });
   if (!response.ok) throw new Error("CRUN_CATALOG_HTTP_" + response.status);
