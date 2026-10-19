@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+    match /templates/{templateId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /jobs/{jobId} {
+      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
+      allow write: if false;
+    }
+    match /ledger/{entryId} {
+      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
+      allow write: if false;
+    }
+    match /ad_rewards/{transactionId} {
+      allow read, write: if false;
+    }
+    match /purchases/{purchaseToken} {
+      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
+      allow write: if false;
+    }
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /jobs/idempotency/{key} {
+      allow read, write: if false;
+    }
+    match /jobs_by_crun_id/{crunJobId} {
+      allow read, write: if false;
+    }
+  }
+}
