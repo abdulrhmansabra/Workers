@@ -1,4 +1,4 @@
-name = "ai-shorts-backend"
+name = "workers"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
 compatibility_flags = ["nodejs_compat"]
@@ -17,7 +17,7 @@ bucket_name = "ai-shorts-media"
 
 [[kv_namespaces]]
 binding = "KV_CACHE"
-id = "your-kv-namespace-id"
+id = "e198b0f6af5e40c6bb98078d44562844"
 
 [triggers]
 crons = ["0 3 * * *"]
