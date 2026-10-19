@@ -5,7 +5,7 @@ import { safeError, safeLog, uuid } from "./utils";
 const PRICING_VERSION = "2026-10-19.v1";
 export function getPricingVersion(): string { return PRICING_VERSION; }
 
-export async function debitCreditsForJob(env: Env, uid: string, price: number, templateId: string, modelId: string, options: Record<string, unknown>, inputAssetKeys: string[], idempotencyKey?: string): Promise<{ jobId: string; balanceAfter: number }> {
+export async function debitCreditsForJob(env: Env, uid: string, price: number, templateId: string, modelId: string, providerModelId: string, options: Record<string, unknown>, inputAssetKeys: string[], idempotencyKey?: string): Promise<{ jobId: string; balanceAfter: number }> {
   if (idempotencyKey) {
     if (!/^[A-Za-z0-9._:-]{1,128}$/.test(idempotencyKey)) throw new Error("INVALID_IDEMPOTENCY_KEY");
     const existing = await getDoc(env, `generation_idempotency/${idempotencyKey}`);
@@ -32,7 +32,7 @@ export async function debitCreditsForJob(env: Env, uid: string, price: number, t
     await commitTransaction(env, txn, [
       { update: { name: docName(userDocPath), fields: { credits: toFirestoreValue(balanceAfter), updated_at: toFirestoreValue(now) } } },
       { update: { name: docName(`credit_ledger/${ledgerId}`), fields: { id: toFirestoreValue(ledgerId), user_id: toFirestoreValue(uid), type: toFirestoreValue("debit"), amount: toFirestoreValue(price), reason: toFirestoreValue("generation"), balance_after: toFirestoreValue(balanceAfter), pricing_version: toFirestoreValue(PRICING_VERSION), job_id: toFirestoreValue(jobId), transaction_id: toFirestoreValue(idempotencyKey ?? jobId), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
-      { update: { name: docName(`generation_jobs/${jobId}`), fields: { id: toFirestoreValue(jobId), user_id: toFirestoreValue(uid), template_id: toFirestoreValue(templateId), model_id: toFirestoreValue(modelId), status: toFirestoreValue("debited"), options: toFirestoreValue(options), input_asset_keys: toFirestoreValue(inputAssetKeys), price: toFirestoreValue(price), pricing_version: toFirestoreValue(PRICING_VERSION), balance_after: toFirestoreValue(balanceAfter), created_at: toFirestoreValue(now), updated_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
+      { update: { name: docName(`generation_jobs/${jobId}`), fields: { id: toFirestoreValue(jobId), user_id: toFirestoreValue(uid), template_id: toFirestoreValue(templateId), model_id: toFirestoreValue(modelId), crun_model_id: toFirestoreValue(providerModelId), status: toFirestoreValue("debited"), options: toFirestoreValue(options), input_asset_keys: toFirestoreValue(inputAssetKeys), price: toFirestoreValue(price), pricing_version: toFirestoreValue(PRICING_VERSION), balance_after: toFirestoreValue(balanceAfter), created_at: toFirestoreValue(now), updated_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
       ...(idempotencyKey ? [{ update: { name: docName(`generation_idempotency/${idempotencyKey}`), fields: { job_id: toFirestoreValue(jobId), user_id: toFirestoreValue(uid), balance_after: toFirestoreValue(balanceAfter), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } }] : []),
     ]);
     safeLog("Credits debited for job", { uid, jobId, price, balanceAfter });
