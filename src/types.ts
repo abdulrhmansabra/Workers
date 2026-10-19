@@ -58,7 +58,9 @@ export interface TemplateDoc {
   id: string;
   name: string;
   description: string;
-  model_id: string;
+  model_id?: string;
+  crun_provider?: "kling" | "bytedance" | "vidu";
+  crun_template_id?: string;
   is_active: boolean;
   preview_video_url: string;
   reference_video_url?: string;
