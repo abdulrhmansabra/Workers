@@ -29,19 +29,28 @@ export const createGenerationHandler: RouteHandler = async (request, env: Env) =
     if (!existing || existing.data.user_id !== auth.uid) throw new HttpError(409, "IDEMPOTENCY_CONFLICT", "The idempotency key is already in use");
     return json({ ok: true, data: { job_id: jobId, status: existing.data.status, price: existing.data.price, pricing_version: existing.data.pricing_version } });
   }
+  let crunResult;
   try {
     const adapter = getAdapter(providerModelId);
-    const crunResult = await adapter.createJob({ model_id: template.model_id, options: body.options ?? {}, image_asset_keys: body.input_asset_keys, reference_video_url: template.reference_video_url, webhook_url: env.WORKER_BASE_URL && env.CRUN_WEBHOOK_SECRET ? `${env.WORKER_BASE_URL.replace(/\\/$/, "")}/v1/crun-webhook?token=${encodeURIComponent(env.CRUN_WEBHOOK_SECRET)}` : undefined }, env);
-    await updateDoc(env, `generation_jobs/${jobId}`, { status: "submitted", crun_job_id: crunResult.crun_job_id, crun_response: crunResult.raw, updated_at: Date.now() });
-    await setDoc(env, `jobs_by_crun_id/${crunResult.crun_job_id}`, { job_id: jobId, uid: auth.uid, created_at: Date.now() });
-    safeLog("Generation job submitted", { jobId, crunJobId: crunResult.crun_job_id });
-    return json({ ok: true, data: { job_id: jobId, status: "submitted" as JobStatus, price: breakdown.total, pricing_version: getPricingVersion() } }, 201);
+    crunResult = await adapter.createJob({ model_id: providerModelId, options: body.options ?? {}, image_asset_keys: body.input_asset_keys, reference_video_url: template.reference_video_url, webhook_url: env.WORKER_BASE_URL && env.CRUN_WEBHOOK_SECRET ? `${env.WORKER_BASE_URL.replace(/\\/$/, "")}/v1/crun-webhook?token=${encodeURIComponent(env.CRUN_WEBHOOK_SECRET)}` : undefined }, env);
   } catch (err) {
     safeError("Crun submission failed, refunding", { jobId });
     try { await refundCreditsForJob(env, auth.uid, jobId, breakdown.total, "crun_submit_failed"); } catch { safeError("Refund also failed", { jobId }); }
     await updateDoc(env, `generation_jobs/${jobId}`, { error: "CRUN_SUBMISSION_FAILED", updated_at: Date.now() });
     throw new HttpError(502, "GENERATION_FAILED", "Failed to submit generation to provider");
   }
+
+  // Once Crun has accepted a billable task, persistence failures must not trigger
+  // an automatic refund: the provider may already be processing and charging it.
+  try {
+    await updateDoc(env, `generation_jobs/${jobId}`, { status: "submitted", crun_job_id: crunResult.crun_job_id, crun_response: crunResult.raw, updated_at: Date.now() });
+    await setDoc(env, `jobs_by_crun_id/${crunResult.crun_job_id}`, { job_id: jobId, uid: auth.uid, created_at: Date.now() });
+  } catch {
+    safeError("Crun accepted task but job persistence failed; manual reconciliation required", { jobId, crunJobId: crunResult.crun_job_id });
+    throw new HttpError(500, "GENERATION_RECONCILIATION_REQUIRED", "The provider accepted the task but its status could not be saved. Contact support before retrying.");
+  }
+  safeLog("Generation job submitted", { jobId, crunJobId: crunResult.crun_job_id });
+  return json({ ok: true, data: { job_id: jobId, status: "submitted" as JobStatus, price: breakdown.total, pricing_version: getPricingVersion() } }, 201);
 };
 
 export const getGenerationHandler: RouteHandler = async (request, env: Env, ctx, params) => {
