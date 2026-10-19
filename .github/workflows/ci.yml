@@ -6,6 +6,10 @@ on:
   push:
     branches: ["fix/firestore-security-credits"]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
