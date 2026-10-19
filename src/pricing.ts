@@ -58,10 +58,24 @@ export async function getValidTemplate(env: Env, templateId: string): Promise<Te
   if (!doc) throw new HttpError(404, "TEMPLATE_NOT_FOUND", `Template not found: ${templateId}`);
   const template = doc.data as unknown as TemplateDoc;
   template.id = doc.id;
-  if (!template.is_active) throw new HttpError(400, "TEMPLATE_INACTIVE", "This template is no longer available");
-  const modelDoc = await getDoc(env, `models/${template.model_id}`);
-  if (!modelDoc || modelDoc.data.is_active !== true || String(modelDoc.data.provider ?? "").toLowerCase() !== "crun" || typeof modelDoc.data.provider_model_id !== "string" || !modelDoc.data.provider_model_id.trim()) throw new HttpError(400, "MODEL_NOT_ALLOWED", "Template model is not an active, configured Crun.ai model");
-  return template;
+  if (template.is_active !== true) throw new HttpError(400, "TEMPLATE_INACTIVE", "This template is no longer available");
+
+  // New templates point directly to a CRUN template catalog entry. Legacy
+  // model_id documents remain readable during migration; model_id is not removed.
+  if (template.crun_provider && template.crun_template_id) {
+    if (!["kling", "bytedance", "vidu"].includes(template.crun_provider)) {
+      throw new HttpError(400, "TEMPLATE_PROVIDER_INVALID", "Unsupported CRUN template provider");
+    }
+    return template;
+  }
+  if (template.model_id) {
+    const modelDoc = await getDoc(env, `models/${template.model_id}`);
+    if (modelDoc?.data.is_active === true &&
+        String(modelDoc.data.provider ?? "").toLowerCase() === "crun" &&
+        typeof modelDoc.data.provider_model_id === "string" &&
+        modelDoc.data.provider_model_id.trim()) return template;
+  }
+  throw new HttpError(400, "TEMPLATE_NOT_CONFIGURED", "Template must have CRUN template provider settings or a configured legacy model");
 }
 
 export function registerAllowedModel(modelId: string): void { ALLOWED_MODELS.add(modelId); }
