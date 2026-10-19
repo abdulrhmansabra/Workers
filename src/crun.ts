@@ -17,7 +17,7 @@ export function registerModel(adapter: CrunModelAdapter, info: ModelInfo): void 
 export function getAdapter(modelId: string): CrunModelAdapter {
   const existing = adapterRegistry.get(modelId);
   if (existing) return existing;
-  if (!modelId || modelId.includes("/") || modelId.includes("..")) throw new Error("INVALID_CRUN_MODEL_ID");
+  if (!modelId || (modelId.includes("/") && !["kling/template", "bytedance/template", "vidu/template"].includes(modelId)) || modelId.includes("..")) throw new Error("INVALID_CRUN_MODEL_ID");
   return new GenericCrunAdapter(modelId);
 }
 
@@ -63,7 +63,7 @@ export async function createTemplateJob(
   env: Env,
   webhookUrl?: string,
 ): Promise<CrunCreateJobResult> {
-  const publicBase = (env.R2_PUBLIC_BASE_URL ?? "").replace(/\\/+$/, "");
+  const publicBase = (env.R2_PUBLIC_BASE_URL ?? "").replace(/\/+$/, "");
   if (!publicBase) throw new Error("R2_PUBLIC_BASE_URL_REQUIRED_FOR_IMAGE_INPUT");
   if (inputAssetKeys.length === 0) throw new Error("TEMPLATE_IMAGE_REQUIRED");
   const imageUrls = inputAssetKeys.map((key) =>
