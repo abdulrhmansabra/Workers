@@ -13,6 +13,7 @@ export interface Env {
   ALLOWED_MIME_TYPES: string;
   CRUN_API_KEY: string;
   CRUN_WEBHOOK_SECRET?: string;
+  WORKER_BASE_URL?: string;
   FIREBASE_SERVICE_ACCOUNT: string;
   R2_BUCKET: R2Bucket;
   KV_CACHE: KVNamespace;
