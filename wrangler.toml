@@ -4,7 +4,7 @@ compatibility_date = "2026-09-01"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-FIREBASE_PROJECT_ID = "your-firebase-project-id"
+FIREBASE_PROJECT_ID = "aishorts-57d93"
 ENVIRONMENT = "production"
 CRUN_BASE_URL = "https://api.crun.ai"
 ALLOWED_ORIGIN = "*"
