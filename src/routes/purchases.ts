@@ -13,7 +13,7 @@ export const purchaseHandler: RouteHandler = async (request, env: Env) => {
   const auth = await requireAuth(request, env);
   const body = await parseJsonBody<PurchaseRequestBody>(request);
   if (!body.product_id || !body.purchase_token || !body.order_id) throw new HttpError(400, "MISSING_FIELDS", "product_id, purchase_token, and order_id are required");
-  const existing = await getDoc(env, `purchases/${body.purchase_token}`);
+  const existing = await getDoc(env, `purchase_events/${body.purchase_token}`);
   if (existing) { safeLog("Duplicate purchase token", { productId: body.product_id }); return json({ ok: true, data: { verified: true, credited: false, status: existing.data.status, credits: existing.data.balance_after } }); }
   const verification = await verifyGooglePlayPurchase(env, body.product_id, body.purchase_token);
   if (!verification.valid) throw new HttpError(400, "PURCHASE_INVALID", "Purchase could not be verified");

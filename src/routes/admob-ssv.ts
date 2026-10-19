@@ -20,7 +20,7 @@ export const admobSSVHandler: RouteHandler = async (request, env: Env) => {
 };
 
 async function getRewardSettings(env: Env) {
-  const doc = await getDoc(env, "settings/ad_rewards");
+  const doc = await getDoc(env, "app_config/general");
   if (doc?.data) return { reward_amount: (doc.data.reward_amount as number) ?? DEFAULT_AD_REWARD_SETTINGS.reward_amount, daily_limit: (doc.data.daily_limit as number) ?? DEFAULT_AD_REWARD_SETTINGS.daily_limit, daily_credit_cap: (doc.data.daily_credit_cap as number) ?? DEFAULT_AD_REWARD_SETTINGS.daily_credit_cap };
   return DEFAULT_AD_REWARD_SETTINGS;
 }

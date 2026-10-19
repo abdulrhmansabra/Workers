@@ -12,6 +12,8 @@ export interface Env {
   MAX_UPLOAD_SIZE_MB: string;
   ALLOWED_MIME_TYPES: string;
   CRUN_API_KEY: string;
+  CRUN_WEBHOOK_SECRET?: string;
+  WORKER_BASE_URL?: string;
   FIREBASE_SERVICE_ACCOUNT: string;
   R2_BUCKET: R2Bucket;
   KV_CACHE: KVNamespace;
@@ -57,7 +59,7 @@ export interface TemplateDoc {
   name: string;
   description: string;
   model_id: string;
-  active: boolean;
+  is_active: boolean;
   preview_video_url: string;
   reference_video_url?: string;
   base_cost: number;

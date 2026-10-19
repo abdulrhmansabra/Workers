@@ -1,38 +1,41 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // The mobile client may read only its own account. All balance writes are server-only.
     match /users/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;
       allow write: if false;
     }
+
+    // Public catalogue reads are restricted to active records. Queries must include
+    // is_active == true so Firestore can prove the rule for every returned document.
+    match /models/{modelId} {
+      allow read: if resource.data.is_active == true;
+      allow write: if false;
+    }
     match /templates/{templateId} {
-      allow read: if true;
+      allow read: if resource.data.is_active == true;
       allow write: if false;
     }
-    match /jobs/{jobId} {
-      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
+
+    match /generation_jobs/{jobId} {
+      allow read: if request.auth != null && resource.data.user_id == request.auth.uid;
       allow write: if false;
     }
-    match /ledger/{entryId} {
-      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
+    match /credit_ledger/{entryId} {
+      allow read: if request.auth != null && resource.data.user_id == request.auth.uid;
       allow write: if false;
     }
-    match /ad_rewards/{transactionId} {
-      allow read, write: if false;
-    }
-    match /purchases/{purchaseToken} {
-      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
-      allow write: if false;
-    }
-    match /settings/{docId} {
-      allow read: if true;
-      allow write: if false;
-    }
-    match /jobs/idempotency/{key} {
-      allow read, write: if false;
-    }
-    match /jobs_by_crun_id/{crunJobId} {
-      allow read, write: if false;
-    }
+
+    // Financial, verification, configuration, and internal index collections are server-only.
+    match /ad_reward_events/{transactionId} { allow read, write: if false; }
+    match /purchase_events/{purchaseToken} { allow read, write: if false; }
+    match /app_config/{docId} { allow read: if true; allow write: if false; }
+    match /admin_audit_logs/{logId} { allow read, write: if false; }
+    match /generation_idempotency/{key} { allow read, write: if false; }
+    match /jobs_by_crun_id/{crunJobId} { allow read, write: if false; }
+
+    // Deny every unlisted collection by default.
+    match /{document=**} { allow read, write: if false; }
   }
 }
