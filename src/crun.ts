@@ -44,7 +44,7 @@ abstract class BaseCrunAdapter implements CrunModelAdapter {
     return this.parseCreateResponse(await resp.json() as Record<string, unknown>);
   }
   async getJobStatus(crun_job_id: string, env: Env): Promise<CrunJobStatus> {
-    const resp = await crunRequest(env, "GET", `/v1/generation_jobs/${crun_job_id}`);
+    const resp = await crunRequest(env, "GET", `/v1/generation_generation_jobs/${crun_job_id}`);
     if (!resp.ok) { safeError("Crun getJobStatus failed", { model_id: this.model_id, status: resp.status }); throw new Error(`CRUN_STATUS_FAILED: ${resp.status}`); }
     return this.parseStatusResponse(await resp.json() as Record<string, unknown>);
   }
