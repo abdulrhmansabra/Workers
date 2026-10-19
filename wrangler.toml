@@ -1,0 +1,23 @@
+name = "ai-shorts-backend"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+FIREBASE_PROJECT_ID = "your-firebase-project-id"
+ENVIRONMENT = "production"
+CRUN_BASE_URL = "https://api.crun.ai"
+ALLOWED_ORIGIN = "*"
+ADMOB_SSV_ENABLED = "true"
+MAX_UPLOAD_SIZE_MB = "50"
+
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "ai-shorts-media"
+
+[[kv_namespaces]]
+binding = "KV_CACHE"
+id = "your-kv-namespace-id"
+
+[triggers]
+crons = ["0 3 * * *"]
