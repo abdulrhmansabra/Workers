@@ -62,7 +62,7 @@ class GenericCrunAdapter implements CrunModelAdapter {
     const prompt = input.prompt ?? (typeof input.options.prompt === "string" ? input.options.prompt : undefined);
     if (prompt) taskInput.prompt = prompt;
     if (input.image_asset_keys?.length) {
-      const publicBase = (env.R2_PUBLIC_BASE_URL ?? "").replace(/\\/+$/, "");
+      const publicBase = (env.R2_PUBLIC_BASE_URL ?? "").replace(/\/+$/, "");
       if (!publicBase) throw new Error("R2_PUBLIC_BASE_URL_REQUIRED_FOR_IMAGE_INPUT");
       taskInput.image_urls = input.image_asset_keys.map((key) => `${publicBase}/${key.split("/").map(encodeURIComponent).join("/")}`);
     }
