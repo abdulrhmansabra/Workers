@@ -24,14 +24,14 @@ export const createGenerationHandler: RouteHandler = async (request, env: Env) =
   try {
     const adapter = getAdapter(template.model_id);
     const crunResult = await adapter.createJob({ model_id: template.model_id, options: body.options ?? {}, image_asset_keys: body.input_asset_keys, reference_video_url: template.reference_video_url, webhook_url: env.WORKER_BASE_URL && env.CRUN_WEBHOOK_SECRET ? `${env.WORKER_BASE_URL.replace(/\\/$/, "")}/v1/crun-webhook?token=${encodeURIComponent(env.CRUN_WEBHOOK_SECRET)}` : undefined }, env);
-    await updateDoc(env, `jobs/${jobId}`, { status: "submitted", crun_job_id: crunResult.crun_job_id, crun_response: crunResult.raw, updated_at: Date.now() });
+    await updateDoc(env, `generation_jobs/${jobId}`, { status: "submitted", crun_job_id: crunResult.crun_job_id, crun_response: crunResult.raw, updated_at: Date.now() });
     await setDoc(env, `jobs_by_crun_id/${crunResult.crun_job_id}`, { job_id: jobId, uid: auth.uid, created_at: Date.now() });
     safeLog("Generation job submitted", { jobId, crunJobId: crunResult.crun_job_id });
     return json({ ok: true, data: { job_id: jobId, status: "submitted" as JobStatus, price: breakdown.total, pricing_version: getPricingVersion() } }, 201);
   } catch (err) {
     safeError("Crun submission failed, refunding", { jobId });
     try { await refundCreditsForJob(env, auth.uid, jobId, breakdown.total, "crun_submit_failed"); } catch { safeError("Refund also failed", { jobId }); }
-    await updateDoc(env, `jobs/${jobId}`, { status: "failed", error: "CRUN_SUBMISSION_FAILED", updated_at: Date.now() });
+    await updateDoc(env, `generation_jobs/${jobId}`, { status: "failed", error: "CRUN_SUBMISSION_FAILED", updated_at: Date.now() });
     throw new HttpError(502, "GENERATION_FAILED", "Failed to submit generation to provider");
   }
 };
@@ -40,7 +40,7 @@ export const getGenerationHandler: RouteHandler = async (request, env: Env, ctx,
   const auth = await requireAuth(request, env);
   const jobId = params.jobId;
   if (!jobId) throw new HttpError(400, "MISSING_PARAM", "jobId is required");
-  const jobDoc = await getDoc(env, `jobs/${jobId}`);
+  const jobDoc = await getDoc(env, `generation_jobs/${jobId}`);
   if (!jobDoc) throw new HttpError(404, "JOB_NOT_FOUND", "Job not found");
   if (jobDoc.data.uid !== auth.uid) throw new HttpError(403, "FORBIDDEN", "You do not own this job");
   const job = jobDoc.data as unknown as JobDoc;
@@ -52,13 +52,13 @@ export const getGenerationHandler: RouteHandler = async (request, env: Env, ctx,
         const resultKey = `outputs/${auth.uid}/${jobId}.mp4`;
         const resp = await fetch(status.result_url);
         if (resp.ok && resp.body) await env.R2_BUCKET.put(resultKey, resp.body, { httpMetadata: { contentType: "video/mp4" }, customMetadata: { owner_uid: auth.uid } });
-        await updateDoc(env, `jobs/${jobId}`, { status: "succeeded", output_asset_key: resultKey, crun_response: status.raw, completed_at: Date.now(), updated_at: Date.now() });
+        await updateDoc(env, `generation_jobs/${jobId}`, { status: "succeeded", output_asset_key: resultKey, crun_response: status.raw, completed_at: Date.now(), updated_at: Date.now() });
       } else if (status.status === "failed") {
         await refundCreditsForJob(env, auth.uid, jobId, job.price, "crun_job_failed");
-        await updateDoc(env, `jobs/${jobId}`, { status: "failed", error: status.error ?? "CRUN_JOB_FAILED", completed_at: Date.now(), updated_at: Date.now() });
-      } else { await updateDoc(env, `jobs/${jobId}`, { status: "processing", crun_response: status.raw, updated_at: Date.now() }); }
+        await updateDoc(env, `generation_jobs/${jobId}`, { status: "failed", error: status.error ?? "CRUN_JOB_FAILED", completed_at: Date.now(), updated_at: Date.now() });
+      } else { await updateDoc(env, `generation_jobs/${jobId}`, { status: "processing", crun_response: status.raw, updated_at: Date.now() }); }
     } catch { safeError("Status poll failed", { jobId }); }
-    const updated = await getDoc(env, `jobs/${jobId}`);
+    const updated = await getDoc(env, `generation_jobs/${jobId}`);
     if (updated) return json({ ok: true, data: sanitizeJob(updated.data as unknown as JobDoc) });
   }
   return json({ ok: true, data: sanitizeJob(job) });
