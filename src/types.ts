@@ -59,7 +59,7 @@ export interface TemplateDoc {
   name: string;
   description: string;
   model_id: string;
-  active: boolean;
+  is_active: boolean;
   preview_video_url: string;
   reference_video_url?: string;
   base_cost: number;
