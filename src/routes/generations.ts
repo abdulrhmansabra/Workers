@@ -18,11 +18,14 @@ export const createGenerationHandler: RouteHandler = async (request, env: Env) =
   validateOptions(template, body.options ?? {});
   const breakdown = calculatePrice(template, body.options ?? {});
   for (const key of body.input_asset_keys) { if (typeof key !== "string" || !key.includes(`/${auth.uid}/`)) throw new HttpError(403, "ASSET_NOT_OWNED", `You do not own asset: ${key}`); }
+  const modelDoc = await getDoc(env, `models/${template.model_id}`);
+  const providerModelId = modelDoc?.data.provider_model_id;
+  if (typeof providerModelId !== "string" || !providerModelId.trim()) throw new HttpError(400, "MODEL_NOT_CONFIGURED", "This Crun model is missing its provider model ID");
   let jobId: string; let balanceAfter: number;
-  try { const result = await debitCreditsForJob(env, auth.uid, breakdown.total, template.id, template.model_id, body.options ?? {}, body.input_asset_keys, body.idempotency_key); jobId = result.jobId; balanceAfter = result.balanceAfter; }
+  try { const result = await debitCreditsForJob(env, auth.uid, breakdown.total, template.id, template.model_id, providerModelId, body.options ?? {}, body.input_asset_keys, body.idempotency_key); jobId = result.jobId; balanceAfter = result.balanceAfter; }
   catch (err) { if (err instanceof InsufficientCreditsError) throw new HttpError(402, "INSUFFICIENT_CREDITS", err.message); throw err; }
   try {
-    const adapter = getAdapter(template.model_id);
+    const adapter = getAdapter(providerModelId);
     const crunResult = await adapter.createJob({ model_id: template.model_id, options: body.options ?? {}, image_asset_keys: body.input_asset_keys, reference_video_url: template.reference_video_url, webhook_url: env.WORKER_BASE_URL && env.CRUN_WEBHOOK_SECRET ? `${env.WORKER_BASE_URL.replace(/\\/$/, "")}/v1/crun-webhook?token=${encodeURIComponent(env.CRUN_WEBHOOK_SECRET)}` : undefined }, env);
     await updateDoc(env, `generation_jobs/${jobId}`, { status: "submitted", crun_job_id: crunResult.crun_job_id, crun_response: crunResult.raw, updated_at: Date.now() });
     await setDoc(env, `jobs_by_crun_id/${crunResult.crun_job_id}`, { job_id: jobId, uid: auth.uid, created_at: Date.now() });
@@ -46,7 +49,7 @@ export const getGenerationHandler: RouteHandler = async (request, env: Env, ctx,
   const job = jobDoc.data as unknown as JobDoc;
   if ((job.status === "submitted" || job.status === "processing") && job.crun_job_id) {
     try {
-      const adapter = getAdapter(job.model_id);
+      const adapter = getAdapter(job.crun_model_id ?? job.model_id);
       const status = await adapter.getJobStatus(job.crun_job_id, env);
       if (status.status === "succeeded" && status.result_url) {
         const resultKey = `outputs/${auth.uid}/${jobId}.mp4`;
@@ -65,5 +68,5 @@ export const getGenerationHandler: RouteHandler = async (request, env: Env, ctx,
 };
 
 function sanitizeJob(job: JobDoc): Partial<JobDoc> {
-  return { id: job.id, template_id: job.template_id, model_id: job.model_id, status: job.status, options: job.options, price: job.price, pricing_version: job.pricing_version, output_asset_key: job.output_asset_key, error: job.error, created_at: job.created_at, updated_at: job.updated_at, completed_at: job.completed_at };
+  return { id: job.id, template_id: job.template_id, model_id: job.model_id, status: job.status, crun_model_id: job.crun_model_id, options: job.options, price: job.price, pricing_version: job.pricing_version, output_asset_key: job.output_asset_key, error: job.error, created_at: job.created_at, updated_at: job.updated_at, completed_at: job.completed_at };
 }
