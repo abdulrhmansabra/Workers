@@ -23,9 +23,9 @@ export async function debitCreditsForJob(env: Env, uid: string, price: number, t
     const docName = (p: string) => `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${p}`;
     await commitTransaction(env, txn, [
       { update: { name: docName(userDocPath), fields: { credits: toFirestoreValue(balanceAfter), updated_at: toFirestoreValue(now) } } },
-      { update: { name: docName(`credit_ledger/${ledgerId}`), fields: { id: toFirestoreValue(ledgerId), uid: toFirestoreValue(uid), type: toFirestoreValue("debit"), amount: toFirestoreValue(price), reason: toFirestoreValue("generation"), balance_after: toFirestoreValue(balanceAfter), pricing_version: toFirestoreValue(PRICING_VERSION), job_id: toFirestoreValue(jobId), transaction_id: toFirestoreValue(idempotencyKey ?? jobId), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
-      { update: { name: docName(`generation_jobs/${jobId}`), fields: { id: toFirestoreValue(jobId), uid: toFirestoreValue(uid), template_id: toFirestoreValue(templateId), model_id: toFirestoreValue(modelId), status: toFirestoreValue("debited"), options: toFirestoreValue(options), input_asset_keys: toFirestoreValue(inputAssetKeys), price: toFirestoreValue(price), pricing_version: toFirestoreValue(PRICING_VERSION), balance_after: toFirestoreValue(balanceAfter), created_at: toFirestoreValue(now), updated_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
-      ...(idempotencyKey ? [{ update: { name: docName(`generation_idempotency/${idempotencyKey}`), fields: { job_id: toFirestoreValue(jobId), uid: toFirestoreValue(uid), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } }] : []),
+      { update: { name: docName(`credit_ledger/${ledgerId}`), fields: { id: toFirestoreValue(ledgerId), user_id: toFirestoreValue(uid), type: toFirestoreValue("debit"), amount: toFirestoreValue(price), reason: toFirestoreValue("generation"), balance_after: toFirestoreValue(balanceAfter), pricing_version: toFirestoreValue(PRICING_VERSION), job_id: toFirestoreValue(jobId), transaction_id: toFirestoreValue(idempotencyKey ?? jobId), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
+      { update: { name: docName(`generation_jobs/${jobId}`), fields: { id: toFirestoreValue(jobId), user_id: toFirestoreValue(uid), template_id: toFirestoreValue(templateId), model_id: toFirestoreValue(modelId), status: toFirestoreValue("debited"), options: toFirestoreValue(options), input_asset_keys: toFirestoreValue(inputAssetKeys), price: toFirestoreValue(price), pricing_version: toFirestoreValue(PRICING_VERSION), balance_after: toFirestoreValue(balanceAfter), created_at: toFirestoreValue(now), updated_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
+      ...(idempotencyKey ? [{ update: { name: docName(`generation_idempotency/${idempotencyKey}`), fields: { job_id: toFirestoreValue(jobId), user_id: toFirestoreValue(uid), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } }] : []),
     ]);
     safeLog("Credits debited for job", { uid, jobId, price, balanceAfter });
     return { jobId, balanceAfter };
@@ -50,7 +50,7 @@ export async function refundCreditsForJob(env: Env, uid: string, jobId: string, 
       await rollbackTransaction(env, txn);
       throw new Error("JOB_NOT_FOUND");
     }
-    if (jobDoc.data.uid !== uid) {
+    if (jobDoc.data.user_id !== uid) {
       await rollbackTransaction(env, txn);
       throw new Error("JOB_OWNER_MISMATCH");
     }
@@ -70,7 +70,7 @@ export async function refundCreditsForJob(env: Env, uid: string, jobId: string, 
     const docName = (p: string) => `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${p}`;
     await commitTransaction(env, txn, [
       { update: { name: docName(userDocPath), fields: { credits: toFirestoreValue(balanceAfter), updated_at: toFirestoreValue(now) } } },
-      { update: { name: docName(`credit_ledger/${ledgerId}`), fields: { id: toFirestoreValue(ledgerId), uid: toFirestoreValue(uid), type: toFirestoreValue("credit"), amount: toFirestoreValue(refundAmount), reason: toFirestoreValue(`refund:${reason}`), balance_after: toFirestoreValue(balanceAfter), job_id: toFirestoreValue(jobId), transaction_id: toFirestoreValue(`refund:${jobId}`), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
+      { update: { name: docName(`credit_ledger/${ledgerId}`), fields: { id: toFirestoreValue(ledgerId), user_id: toFirestoreValue(uid), type: toFirestoreValue("credit"), amount: toFirestoreValue(refundAmount), reason: toFirestoreValue(`refund:${reason}`), balance_after: toFirestoreValue(balanceAfter), job_id: toFirestoreValue(jobId), transaction_id: toFirestoreValue(`refund:${jobId}`), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
       { update: { name: docName(jobDocPath), fields: { status: toFirestoreValue("refunded"), updated_at: toFirestoreValue(now), balance_after: toFirestoreValue(balanceAfter) } } },
     ]);
     safeLog("Credits refunded for job", { uid, jobId, refundAmount, balanceAfter });
@@ -95,8 +95,8 @@ export async function creditAdReward(env: Env, uid: string, transactionId: strin
     const docName = (p: string) => `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${p}`;
     await commitTransaction(env, txn, [
       { update: { name: docName(userDocPath), fields: { credits: toFirestoreValue(balanceAfter), updated_at: toFirestoreValue(now) } } },
-      { update: { name: docName(`credit_ledger/${ledgerId}`), fields: { id: toFirestoreValue(ledgerId), uid: toFirestoreValue(uid), type: toFirestoreValue("credit"), amount: toFirestoreValue(rewardAmount), reason: toFirestoreValue("ad_reward"), balance_after: toFirestoreValue(balanceAfter), transaction_id: toFirestoreValue(transactionId), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
-      { update: { name: docName(`ad_reward_events/${transactionId}`), fields: { id: toFirestoreValue(transactionId), uid: toFirestoreValue(uid), transaction_id: toFirestoreValue(transactionId), reward_amount: toFirestoreValue(rewardAmount), ad_unit_id: toFirestoreValue(adUnitId ?? ""), verified: toFirestoreValue(true), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
+      { update: { name: docName(`credit_ledger/${ledgerId}`), fields: { id: toFirestoreValue(ledgerId), user_id: toFirestoreValue(uid), type: toFirestoreValue("credit"), amount: toFirestoreValue(rewardAmount), reason: toFirestoreValue("ad_reward"), balance_after: toFirestoreValue(balanceAfter), transaction_id: toFirestoreValue(transactionId), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
+      { update: { name: docName(`ad_reward_events/${transactionId}`), fields: { id: toFirestoreValue(transactionId), user_id: toFirestoreValue(uid), transaction_id: toFirestoreValue(transactionId), reward_amount: toFirestoreValue(rewardAmount), ad_unit_id: toFirestoreValue(adUnitId ?? ""), verified: toFirestoreValue(true), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
     ]);
     safeLog("Ad reward credited", { uid, transactionId, rewardAmount, balanceAfter });
     return { credited: true, balanceAfter };
@@ -117,8 +117,8 @@ export async function creditPurchase(env: Env, uid: string, purchaseToken: strin
     const docName = (p: string) => `projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${p}`;
     await commitTransaction(env, txn, [
       { update: { name: docName(userDocPath), fields: { credits: toFirestoreValue(balanceAfter), updated_at: toFirestoreValue(now) } } },
-      { update: { name: docName(`credit_ledger/${ledgerId}`), fields: { id: toFirestoreValue(ledgerId), uid: toFirestoreValue(uid), type: toFirestoreValue("credit"), amount: toFirestoreValue(creditsGranted), reason: toFirestoreValue("purchase"), balance_after: toFirestoreValue(balanceAfter), transaction_id: toFirestoreValue(purchaseToken), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
-      { update: { name: docName(`purchase_events/${purchaseToken}`), fields: { uid: toFirestoreValue(uid), product_id: toFirestoreValue(productId), purchase_token: toFirestoreValue(purchaseToken), order_id: toFirestoreValue(orderId), credits_granted: toFirestoreValue(creditsGranted), status: toFirestoreValue("verified"), verified_at: toFirestoreValue(now), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
+      { update: { name: docName(`credit_ledger/${ledgerId}`), fields: { id: toFirestoreValue(ledgerId), user_id: toFirestoreValue(uid), type: toFirestoreValue("credit"), amount: toFirestoreValue(creditsGranted), reason: toFirestoreValue("purchase"), balance_after: toFirestoreValue(balanceAfter), transaction_id: toFirestoreValue(purchaseToken), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
+      { update: { name: docName(`purchase_events/${purchaseToken}`), fields: { user_id: toFirestoreValue(uid), product_id: toFirestoreValue(productId), purchase_token: toFirestoreValue(purchaseToken), order_id: toFirestoreValue(orderId), credits_granted: toFirestoreValue(creditsGranted), status: toFirestoreValue("verified"), verified_at: toFirestoreValue(now), created_at: toFirestoreValue(now) } }, currentDocument: { exists: false } },
     ]);
     safeLog("Purchase credited", { uid, productId, creditsGranted, balanceAfter });
     return { credited: true, balanceAfter };
