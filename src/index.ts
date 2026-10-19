@@ -12,6 +12,7 @@ import { uploadHandler, fileAccessHandler } from "./routes/uploads";
 import { admobSSVHandler } from "./routes/admob-ssv";
 import { crunWebhookHandler } from "./routes/crun-webhook";
 import { purchaseHandler } from "./routes/purchases";
+import { syncCrunTemplateCatalog } from "./crun-templates";
 
 addRoute("GET", "/health", healthHandler);
 addRoute("GET", "/v1/models", modelsHandler);
@@ -54,4 +55,10 @@ export default {
 
 async function runScheduledCleanup(env: Env): Promise<void> {
   console.log("[ai-shorts] Scheduled cleanup started");
+  try {
+    const result = await syncCrunTemplateCatalog(env);
+    safeLog("Scheduled CRUN catalog sync completed", result);
+  } catch (error) {
+    safeError("Scheduled CRUN catalog sync failed", { error: error instanceof Error ? error.message.slice(0, 160) : "unknown" });
+  }
 }
