@@ -31,7 +31,7 @@ export const createGenerationHandler: RouteHandler = async (request, env: Env) =
   } catch (err) {
     safeError("Crun submission failed, refunding", { jobId });
     try { await refundCreditsForJob(env, auth.uid, jobId, breakdown.total, "crun_submit_failed"); } catch { safeError("Refund also failed", { jobId }); }
-    await updateDoc(env, `generation_jobs/${jobId}`, { status: "failed", error: "CRUN_SUBMISSION_FAILED", updated_at: Date.now() });
+    await updateDoc(env, `generation_jobs/${jobId}`, { error: "CRUN_SUBMISSION_FAILED", updated_at: Date.now() });
     throw new HttpError(502, "GENERATION_FAILED", "Failed to submit generation to provider");
   }
 };
@@ -55,7 +55,7 @@ export const getGenerationHandler: RouteHandler = async (request, env: Env, ctx,
         await updateDoc(env, `generation_jobs/${jobId}`, { status: "succeeded", output_asset_key: resultKey, crun_response: status.raw, completed_at: Date.now(), updated_at: Date.now() });
       } else if (status.status === "failed") {
         await refundCreditsForJob(env, auth.uid, jobId, job.price, "crun_job_failed");
-        await updateDoc(env, `generation_jobs/${jobId}`, { status: "failed", error: status.error ?? "CRUN_JOB_FAILED", completed_at: Date.now(), updated_at: Date.now() });
+        await updateDoc(env, `generation_jobs/${jobId}`, { error: status.error ?? "CRUN_JOB_FAILED", completed_at: Date.now(), updated_at: Date.now() });
       } else { await updateDoc(env, `generation_jobs/${jobId}`, { status: "processing", crun_response: status.raw, updated_at: Date.now() }); }
     } catch { safeError("Status poll failed", { jobId }); }
     const updated = await getDoc(env, `generation_jobs/${jobId}`);
