@@ -1,9 +1,18 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
-    {
-      "source": "/:path*",
-      "destination": "https://workers.gamespc772455.workers.dev/:path*"
-    }
+    { "source": "/health", "destination": "https://workers.gamespc772455.workers.dev/health" },
+    { "source": "/v1/models", "destination": "https://workers.gamespc772455.workers.dev/v1/models" },
+    { "source": "/v1/templates", "destination": "https://workers.gamespc772455.workers.dev/v1/templates" },
+    { "source": "/v1/templates/:templateId", "destination": "https://workers.gamespc772455.workers.dev/v1/templates/:templateId" },
+    { "source": "/v1/me/balance", "destination": "https://workers.gamespc772455.workers.dev/v1/me/balance" },
+    { "source": "/v1/generations/quote", "destination": "https://workers.gamespc772455.workers.dev/v1/generations/quote" },
+    { "source": "/v1/generations", "destination": "https://workers.gamespc772455.workers.dev/v1/generations" },
+    { "source": "/v1/generations/:jobId", "destination": "https://workers.gamespc772455.workers.dev/v1/generations/:jobId" },
+    { "source": "/v1/uploads", "destination": "https://workers.gamespc772455.workers.dev/v1/uploads" },
+    { "source": "/v1/files/:path*", "destination": "https://workers.gamespc772455.workers.dev/v1/files/:path*" },
+    { "source": "/v1/purchases", "destination": "https://workers.gamespc772455.workers.dev/v1/purchases" },
+    { "source": "/v1/admob-ssv", "destination": "https://workers.gamespc772455.workers.dev/v1/admob-ssv" },
+    { "source": "/v1/crun-webhook", "destination": "https://workers.gamespc772455.workers.dev/v1/crun-webhook" }
   ]
 }
