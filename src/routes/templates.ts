@@ -1,12 +1,17 @@
 import type { Env, TemplateDoc } from "../types";
 import { json, HttpError } from "../utils";
 import { getDoc, queryCollection } from "../firestore";
-import { ALLOWED_MODELS } from "../pricing";
+
 import type { RouteHandler } from "../router";
 
 export const templatesListHandler: RouteHandler = async (request, env: Env) => {
   const docs = await queryCollection(env, "templates", [{ field: "is_active", op: "==", value: true }], 100);
-  const templates = docs.map((d) => d.data as unknown as TemplateDoc).filter((t) => ALLOWED_MODELS.has(t.model_id));
+  const candidates = docs.map((d) => ({ ...d.data, id: d.id }) as unknown as TemplateDoc);
+  const activeChecks = await Promise.all(candidates.map(async (template) => {
+    const model = await getDoc(env, `models/${template.model_id}`);
+    return model?.data.is_active === true && String(model.data.provider ?? "").toLowerCase() === "crun" ? template : null;
+  }));
+  const templates = activeChecks.filter((t): t is TemplateDoc => t !== null);
   return json({ ok: true, data: { templates, count: templates.length } });
 };
 
@@ -18,6 +23,7 @@ export const templateDetailHandler: RouteHandler = async (request, env: Env, ctx
   const template = doc.data as unknown as TemplateDoc;
   template.id = doc.id;
   if (!template.is_active) throw new HttpError(400, "TEMPLATE_INACTIVE", "Template is not active");
-  if (!ALLOWED_MODELS.has(template.model_id)) throw new HttpError(400, "MODEL_NOT_ALLOWED", "Template model is not approved");
+  const model = await getDoc(env, `models/${template.model_id}`);
+  if (!model || model.data.is_active !== true || String(model.data.provider ?? "").toLowerCase() !== "crun") throw new HttpError(400, "MODEL_NOT_ALLOWED", "Template model is not an active Crun.ai model");
   return json({ ok: true, data: template });
 };
