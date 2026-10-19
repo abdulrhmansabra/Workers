@@ -55,6 +55,10 @@ function constantTimeEqual(a: string, b: string): boolean {
 }
 
 function isPrivateHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\\[|\\]$/g, "");
-  return host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal") || host === "::1" || host.startsWith("10.") || host.startsWith("127.") || host.startsWith("169.254.") || host.startsWith("192.168.") || /^172\\.(1[6-9]|2[0-9]|3[01])\\./.test(host);
+  const host = hostname.toLowerCase().replace("[", "").replace("]", "");
+  const octets = host.split(".").map((part) => Number(part));
+  const private172 = octets.length === 4 && octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31;
+  return host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal") ||
+    host === "::1" || host.startsWith("10.") || host.startsWith("127.") ||
+    host.startsWith("169.254.") || host.startsWith("192.168.") || private172;
 }
