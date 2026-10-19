@@ -59,8 +59,15 @@ class GenericCrunAdapter implements CrunModelAdapter {
   constructor(public readonly model_id: string) {}
   async createJob(input: CrunCreateJobInput, env: Env): Promise<CrunCreateJobResult> {
     const taskInput: Record<string, unknown> = { ...input.options };
-    if (input.prompt) taskInput.prompt = input.prompt;
-    if (input.image_asset_keys?.length) taskInput.image_urls = input.image_asset_keys;
+    const prompt = input.prompt ?? (typeof input.options.prompt === "string" ? input.options.prompt : undefined);
+    if (prompt) taskInput.prompt = prompt;
+    delete taskInput.prompt;
+    if (prompt) taskInput.prompt = prompt;
+    if (input.image_asset_keys?.length) {
+      const publicBase = (env.R2_PUBLIC_BASE_URL ?? "").replace(/\\/+$/, "");
+      if (!publicBase) throw new Error("R2_PUBLIC_BASE_URL_REQUIRED_FOR_IMAGE_INPUT");
+      taskInput.image_urls = input.image_asset_keys.map((key) => `${publicBase}/${key.split("/").map(encodeURIComponent).join("/")}`);
+    }
     if (input.reference_video_url) taskInput.video_url = input.reference_video_url;
     const requestBody: Record<string, unknown> = { model: this.model_id, input: taskInput };
     if (input.webhook_url) requestBody.callback_url = input.webhook_url;
