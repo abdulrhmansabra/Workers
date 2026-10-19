@@ -1,0 +1,18 @@
+{
+  "templates": {
+    "example-video-template": {
+      "name": "AI Short Video",
+      "model_id": "crun-video-v1",
+      "active": true,
+      "base_cost": 10,
+      "supported_options": []
+    }
+  },
+  "settings": {
+    "ad_rewards": {
+      "reward_amount": 5,
+      "daily_limit": 20,
+      "daily_credit_cap": 100
+    }
+  }
+}
