@@ -76,7 +76,7 @@ export const DEFAULT_AD_REWARD_SETTINGS: AdRewardSettings = { reward_amount: 5, 
 export async function checkDailyLimit(env: Env, uid: string, settings: AdRewardSettings): Promise<boolean> {
   const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0); const startMs = startOfDay.getTime();
   const { queryCollection } = await import("./firestore");
-  const recent = await queryCollection(env, "ad_rewards", [{ field: "uid", op: "==", value: uid }, { field: "created_at", op: ">=", value: startMs }], settings.daily_limit + 1);
+  const recent = await queryCollection(env, "ad_reward_events", [{ field: "uid", op: "==", value: uid }, { field: "created_at", op: ">=", value: startMs }], settings.daily_limit + 1);
   if (recent.length >= settings.daily_limit) return false;
   const totalCreditsToday = recent.reduce((sum, r) => sum + (r.data.reward_amount as number), 0);
   if (totalCreditsToday + settings.reward_amount > settings.daily_credit_cap) return false;
