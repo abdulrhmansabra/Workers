@@ -198,6 +198,6 @@ export async function syncCrunTemplatePage(env: Env, provider: CatalogProvider, 
     data: { catalog_version: 1, updated_at: Date.now(), templates: mergedTemplates },
     updateMaskFields,
   }]);
-  safeLog("CRUN catalog page synced into unified document", { provider, page, count: pending.length, firestoreWrites: writes.length });
+  safeLog("CRUN catalog page synced into unified document", { provider, page, count: pending.length, firestoreWrites: 1 });
   return pending.length;
 }
