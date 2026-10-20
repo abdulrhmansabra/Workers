@@ -12,7 +12,8 @@ import { uploadHandler, fileAccessHandler } from "./routes/uploads";
 import { admobSSVHandler } from "./routes/admob-ssv";
 import { crunWebhookHandler } from "./routes/crun-webhook";
 import { purchaseHandler } from "./routes/purchases";
-import { syncCrunTemplateCatalog } from "./crun-templates";
+import { enqueueCrunTemplateSync, syncCrunTemplatePage } from "./crun-templates";
+import type { CrunTemplateSyncMessage } from "./types";
 
 addRoute("GET", "/health", healthHandler);
 addRoute("GET", "/v1/models", modelsHandler);
@@ -49,16 +50,35 @@ export default {
     }
   },
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(runScheduledCleanup(env));
+    ctx.waitUntil(runScheduledCatalogEnqueue(env));
+  },
+  async queue(batch: MessageBatch<CrunTemplateSyncMessage>, env: Env): Promise<void> {
+    // Process messages sequentially within a small batch to keep each invocation
+    // safely below the Workers subrequest budget. Failed messages are retried by Queue.
+    for (const message of batch.messages) {
+      try {
+        await syncCrunTemplatePage(env, message.body.provider, message.body.page);
+        message.ack();
+      } catch (error) {
+        safeError("CRUN catalog page task failed", {
+          provider: message.body.provider,
+          page: message.body.page,
+          error: error instanceof Error ? error.message.slice(0, 120) : "unknown",
+        });
+        message.retry({ delaySeconds: 30 });
+      }
+    }
   },
 };
 
-async function runScheduledCleanup(env: Env): Promise<void> {
-  console.log("[ai-shorts] Scheduled cleanup started");
+async function runScheduledCatalogEnqueue(env: Env): Promise<void> {
+  safeLog("Scheduled CRUN catalog queueing started", {});
   try {
-    const result = await syncCrunTemplateCatalog(env);
-    safeLog("Scheduled CRUN catalog sync completed", result);
+    const result = await enqueueCrunTemplateSync(env);
+    safeLog("Scheduled CRUN catalog tasks queued", result);
   } catch (error) {
-    safeError("Scheduled CRUN catalog sync failed", { error: error instanceof Error ? error.message.slice(0, 160) : "unknown" });
+    safeError("Scheduled CRUN catalog queueing failed", {
+      error: error instanceof Error ? error.message.slice(0, 160) : "unknown",
+    });
   }
 }
