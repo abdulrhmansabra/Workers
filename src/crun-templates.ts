@@ -54,8 +54,9 @@ async function requestCatalog(env: Env, path: string, page: number): Promise<Rec
 }
 
 /**
- * Refreshes a provider-owned catalog in its own collection. It never writes to
- * the templates collection, so administrator activation and pricing stay intact.
+ * Refreshes the provider catalog and creates inactive draft documents for new
+ * templates. Existing template configuration is administrator-owned; sync only
+ * refreshes provider_cost on an existing matching template.
  */
 export async function syncCrunTemplateCatalog(env: Env): Promise<{ providers: number; templates: number }> {
   let total = 0;
@@ -88,6 +89,44 @@ export async function syncCrunTemplateCatalog(env: Env): Promise<{ providers: nu
           };
           if (existing) await updateDoc(env, path, record);
           else await setDoc(env, path, record);
+
+          // Use the same stable ID in templates so the app/server can address it.
+          // Never overwrite admin-controlled pricing, activation, or options.
+          const templatePath = "templates/" + docId;
+          const templateDoc = await getDoc(env, templatePath);
+          if (templateDoc) {
+            await updateDoc(env, templatePath, { provider_cost: record.provider_cost });
+          } else {
+            const now = Date.now();
+            await setDoc(env, templatePath, {
+              id: docId,
+              name: info.name,
+              description: "",
+              category: "video",
+              crun_provider: source.provider,
+              crun_template_id: info.providerId,
+              is_active: false,
+              base_cost: 0,
+              provider_cost: record.provider_cost,
+              preview_video_url: info.preview,
+              thumbnail_url: info.cover,
+              reference_video_url: "",
+              customization_config: {
+                allow_image_input: false,
+                allow_prompt: true,
+                allow_reference_video: false,
+              },
+              aspect_ratio_options: [],
+              duration_options: [],
+              resolution_options: [],
+              option_pricing: {},
+              supported_options: [],
+              pricing_version: 1,
+              sort_order: 999,
+              created_at: now,
+              updated_at: now,
+            });
+          }
           providerCount++;
         }
         const totalAvailable = Number(data.total);
