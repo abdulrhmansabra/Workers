@@ -80,7 +80,11 @@ export async function syncCrunTemplateCatalog(env: Env): Promise<{ providers: nu
   let total = 0;
   let successfulProviders = 0;
 
-  for (const source of SOURCES) {
+  // The scheduled trigger runs daily at 03:00 UTC. Rotate providers by UTC weekday
+  // so one invocation handles only one provider and stays within the Workers subrequest budget.
+  const source = SOURCES[new Date().getUTCDay() % SOURCES.length];
+  {
+
     try {
       // Fetch the provider catalog first, then read and write Firestore in batches.
       // This avoids a Firestore network request for every individual document.
@@ -90,7 +94,7 @@ export async function syncCrunTemplateCatalog(env: Env): Promise<{ providers: nu
         record: RecordValue;
       }> = [];
 
-      for (let page = 1; page <= 20; page++) {
+      for (let page = 1; page <= 5; page++) {
         const data = await requestCatalog(env, source.path, page);
         const items = catalogItems(data);
         if (items.length === 0) break;
