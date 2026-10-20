@@ -18,10 +18,28 @@ function string(value: unknown): string {
   return typeof value === "string" || typeof value === "number" ? String(value) : "";
 }
 function catalogItems(data: RecordValue): unknown[] {
-  for (const key of ["templates", "items", "list", "records"]) {
-    if (Array.isArray(data[key])) return data[key] as unknown[];
+  // CRUN providers may wrap their catalog differently. ByteDance's documented
+  // response is { code: 200, data: { total, templates: [...] } }.
+  const candidates: RecordValue[] = [data];
+  for (const key of ["data", "result", "catalog", "response"]) {
+    const nested = data[key];
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      candidates.push(nested as RecordValue);
+    }
   }
-  return [];
+  for (const candidate of candidates) {
+    for (const key of ["templates", "items", "list", "records"]) {
+      if (Array.isArray(candidate[key])) return candidate[key] as unknown[];
+    }
+    // Some APIs return the list itself as data.
+    for (const key of ["data", "result"]) {
+      if (Array.isArray(candidate[key])) return candidate[key] as unknown[];
+    }
+  }
+  const total = candidates.map((candidate) => candidate.total).find((value) => typeof value === "number");
+  if (total === 0) return [];
+  const keys = [...new Set(candidates.flatMap((candidate) => Object.keys(candidate)))].slice(0, 20);
+  throw new Error("CRUN_CATALOG_UNRECOGNIZED_RESPONSE: " + keys.join(","));
 }
 function identity(provider: CatalogProvider, item: RecordValue): { key: string; name: string; cover: string; preview: string; providerId: string } | null {
   const providerId = provider === "kling" ? string(item.key)

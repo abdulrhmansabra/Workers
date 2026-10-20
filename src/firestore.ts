@@ -109,9 +109,13 @@ export async function updateDoc(env: Env, path: string, data: Record<string, unk
   const token = await getAccessToken(env);
   const fields: Record<string, FirestoreValue> = {};
   for (const [k, v] of Object.entries(data)) fields[k] = toFirestoreValue(v);
-  const fieldPaths = Object.keys(fields).join(",");
-  const url = `${docPath(env, path)}?updateMask.fieldPaths=${encodeURIComponent(fieldPaths).replace(/%2C/g, ",")}`;
-  const resp = await fetch(url, { method: "PATCH", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ fields }) });
+  const url = new URL(docPath(env, path));
+  // Firestore REST expects one updateMask.fieldPaths query parameter per field.
+  // A comma-joined value is parsed as a single field path and can cause HTTP 400.
+  for (const fieldPath of Object.keys(fields)) {
+    url.searchParams.append("updateMask.fieldPaths", fieldPath);
+  }
+  const resp = await fetch(url.toString(), { method: "PATCH", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ fields }) });
   if (!resp.ok) { safeError("Firestore updateDoc failed", { path, status: resp.status }); throw new Error(`FIRESTORE_UPDATE_FAILED: ${resp.status}`); }
 }
 

@@ -22,4 +22,22 @@ id = "e198b0f6af5e40c6bb98078d44562844"
 [triggers]
 crons = ["0 3 * * *"]
 
+# Explicit parent table retained from main to resolve the append conflict.
 [previews]
+
+# Preview Settings
+[previews.vars]
+ADMOB_SSV_ENABLED = "true"
+ALLOWED_ORIGIN = "*"
+CRUN_BASE_URL = "https://api.crun.ai"
+ENVIRONMENT = "preview"
+FIREBASE_PROJECT_ID = "aishorts-57d93"
+MAX_UPLOAD_SIZE_MB = "50"
+
+[[previews.kv_namespaces]]
+binding = "KV_CACHE"
+id = "d801bf6e6df340d4a6489b479dfa6348"
+
+[[previews.r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "preview-ai-shorts-media"
