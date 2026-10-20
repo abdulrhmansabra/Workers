@@ -98,6 +98,105 @@ export async function getDoc(env: Env, path: string, transaction?: string): Prom
   return fromFirestoreDoc(await resp.json() as { name?: string; fields?: Record<string, FirestoreValue> });
 }
 
+/**
+ * Read multiple Firestore documents with the REST batchGet endpoint.
+ * Firestore returns a JSON stream (one JSON object per line), not a JSON array.
+ */
+export async function batchGetDocs(
+  env: Env,
+  paths: string[],
+): Promise<Map<string, { id: string; data: Record<string, unknown> }>> {
+  const result = new Map<string, { id: string; data: Record<string, unknown> }>();
+  const uniquePaths = [...new Set(paths)];
+  if (uniquePaths.length === 0) return result;
+
+  const token = await getAccessToken(env);
+  const endpoint = `${FIRESTORE_BASE}/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents:batchGet`;
+
+  // Keep the request size bounded and avoid excessively large JSON payloads.
+  for (let offset = 0; offset < uniquePaths.length; offset += 100) {
+    const chunk = uniquePaths.slice(offset, offset + 100);
+    const resp = await fetch(endpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ documents: chunk.map((path) => docPath(env, path)) }),
+    });
+    if (!resp.ok) {
+      safeError("Firestore batchGet failed", { status: resp.status, count: chunk.length });
+      throw new Error(`FIRESTORE_BATCH_GET_FAILED: ${resp.status}`);
+    }
+
+    const body = await resp.text();
+    let entries: unknown[] = [];
+    try {
+      const parsed = JSON.parse(body) as unknown;
+      entries = Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+      entries = body.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => JSON.parse(line) as unknown);
+    }
+
+    for (const entryValue of entries) {
+      const entry = entryValue as {
+        found?: { name?: string; fields?: Record<string, FirestoreValue> };
+        missing?: string;
+      };
+      if (!entry?.found?.name) continue;
+      const parsed = fromFirestoreDoc(entry.found);
+      if (parsed) {
+        const marker = "/documents/";
+        const idx = entry.found.name.indexOf(marker);
+        const path = idx >= 0 ? entry.found.name.slice(idx + marker.length) : "";
+        if (path) result.set(path, parsed);
+      }
+    }
+  }
+  return result;
+}
+
+export async function commitWrites(
+  env: Env,
+  writes: Array<{
+    path: string;
+    data: Record<string, unknown>;
+    updateMaskFields?: string[];
+    exists?: boolean;
+  }>,
+): Promise<void> {
+  if (writes.length === 0) return;
+  const token = await getAccessToken(env);
+  const endpoint = commitPath(env);
+
+  // Firestore accepts up to 500 writes per commit. Use a lower chunk size to
+  // leave room for payload size and future fields.
+  for (let offset = 0; offset < writes.length; offset += 400) {
+    const chunk = writes.slice(offset, offset + 400);
+    const firestoreWrites = chunk.map((entry) => {
+      const fields: Record<string, FirestoreValue> = {};
+      for (const [key, value] of Object.entries(entry.data)) fields[key] = toFirestoreValue(value);
+      const write: Record<string, unknown> = {
+        update: { name: docPath(env, entry.path), fields },
+      };
+      if (entry.updateMaskFields) {
+        write.updateMask = { fieldPaths: entry.updateMaskFields };
+      }
+      if (entry.exists !== undefined) {
+        write.currentDocument = { exists: entry.exists };
+      }
+      return write;
+    });
+
+    const resp = await fetch(endpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ writes: firestoreWrites }),
+    });
+    if (!resp.ok) {
+      safeError("Firestore batch commit failed", { status: resp.status, count: chunk.length });
+      throw new Error(`FIRESTORE_BATCH_COMMIT_FAILED: ${resp.status}`);
+    }
+  }
+}
+
 export async function setDoc(env: Env, path: string, data: Record<string, unknown>): Promise<void> {
   const token = await getAccessToken(env);
   const fields: Record<string, FirestoreValue> = {};

@@ -1,5 +1,5 @@
 import type { Env } from "./types";
-import { getDoc, setDoc, updateDoc } from "./firestore";
+import { batchGetDocs, commitWrites } from "./firestore";
 import { safeError, safeLog } from "./utils";
 
 type CatalogProvider = "kling" | "bytedance" | "vidu";
@@ -79,30 +79,27 @@ async function requestCatalog(env: Env, path: string, page: number): Promise<Rec
 export async function syncCrunTemplateCatalog(env: Env): Promise<{ providers: number; templates: number }> {
   let total = 0;
   let successfulProviders = 0;
+
   for (const source of SOURCES) {
     try {
-      let providerCount = 0;
+      // Fetch the provider catalog first, then read and write Firestore in batches.
+      // This avoids a Firestore network request for every individual document.
+      const pending: Array<{
+        docId: string;
+        info: { key: string; name: string; cover: string; preview: string; providerId: string };
+        record: RecordValue;
+      }> = [];
+
       for (let page = 1; page <= 20; page++) {
         const data = await requestCatalog(env, source.path, page);
         const items = catalogItems(data);
         if (items.length === 0) break;
+
         for (const raw of items) {
           const item = object(raw);
           const info = identity(source.provider, item);
           if (!info) continue;
           const docId = (source.provider + "_" + info.key).replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 140);
-          const path = "crun_template_catalog/" + docId;
-          let existing: { id: string; data: Record<string, unknown> } | null = null;
-          let existingReadFailed = false;
-          try {
-            existing = await getDoc(env, path);
-          } catch (e) {
-            existingReadFailed = true;
-            safeError("Catalog doc read failed, will upsert", {
-              path,
-              error: e instanceof Error ? e.message.slice(0, 80) : "unknown",
-            });
-          }
           const record = {
             id: docId,
             provider: source.provider,
@@ -115,28 +112,58 @@ export async function syncCrunTemplateCatalog(env: Env): Promise<{ providers: nu
             raw_catalog: JSON.stringify(item),
             last_synced_at: Date.now(),
           };
-          if (existing || existingReadFailed) await updateDoc(env, path, record);
-          else await setDoc(env, path, record);
+          pending.push({ docId, info, record });
+        }
 
-          // Use the same stable ID in templates so the app/server can address it.
-          // Never overwrite admin-controlled pricing, activation, or options.
-          const templatePath = "templates/" + docId;
-          let templateDoc: { id: string; data: Record<string, unknown> } | null = null;
-          let templateReadFailed = false;
-          try {
-            templateDoc = await getDoc(env, templatePath);
-          } catch (e) {
-            templateReadFailed = true;
-            safeError("Template doc read failed, will update provider cost", {
-              path: templatePath,
-              error: e instanceof Error ? e.message.slice(0, 80) : "unknown",
-            });
-          }
-          if (templateDoc || templateReadFailed) {
-            await updateDoc(env, templatePath, { provider_cost: record.provider_cost });
-          } else {
-            const now = Date.now();
-            await setDoc(env, templatePath, {
+        const totalAvailable = Number(data.total);
+        if (!Number.isFinite(totalAvailable) || page * 50 >= totalAvailable || items.length < 50) break;
+      }
+
+      if (pending.length === 0) {
+        successfulProviders++;
+        safeLog("Crun template catalog synced", { provider: source.provider, count: 0 });
+        continue;
+      }
+
+      // Batch reads are chunked to keep each request bounded.
+      const paths = pending.flatMap(({ docId }) => [
+        "crun_template_catalog/" + docId,
+        "templates/" + docId,
+      ]);
+      const existingDocs = await batchGetDocs(env, paths);
+      const writes: Array<{
+        path: string;
+        data: RecordValue;
+        updateMaskFields?: string[];
+        exists?: boolean;
+      }> = [];
+
+      for (const { docId, info, record } of pending) {
+        const catalogPath = "crun_template_catalog/" + docId;
+        const templatePath = "templates/" + docId;
+
+        // Catalog fields are an upsert: update only synchronized fields so any
+        // unrelated fields already present remain untouched.
+        writes.push({
+          path: catalogPath,
+          data: record,
+          updateMaskFields: Object.keys(record),
+        });
+
+        // Template pricing/configuration is admin-owned. Existing templates get
+        // only provider_cost refreshed; missing templates get an inactive draft.
+        if (existingDocs.has(templatePath)) {
+          writes.push({
+            path: templatePath,
+            data: { provider_cost: record.provider_cost },
+            updateMaskFields: ["provider_cost"],
+          });
+        } else {
+          const now = Date.now();
+          writes.push({
+            path: templatePath,
+            exists: false,
+            data: {
               id: docId,
               name: info.name,
               description: "",
@@ -163,16 +190,19 @@ export async function syncCrunTemplateCatalog(env: Env): Promise<{ providers: nu
               sort_order: 999,
               created_at: now,
               updated_at: now,
-            });
-          }
-          providerCount++;
+            },
+          });
         }
-        const totalAvailable = Number(data.total);
-        if (!Number.isFinite(totalAvailable) || page * 50 >= totalAvailable || items.length < 50) break;
       }
+
+      await commitWrites(env, writes);
       successfulProviders++;
-      total += providerCount;
-      safeLog("Crun template catalog synced", { provider: source.provider, count: providerCount });
+      total += pending.length;
+      safeLog("Crun template catalog synced", {
+        provider: source.provider,
+        count: pending.length,
+        firestoreWrites: writes.length,
+      });
     } catch (error) {
       safeError("Crun template catalog sync failed", {
         provider: source.provider,
@@ -180,6 +210,7 @@ export async function syncCrunTemplateCatalog(env: Env): Promise<{ providers: nu
       });
     }
   }
+
   if (successfulProviders === 0) throw new Error("CRUN_TEMPLATE_CATALOG_SYNC_FAILED");
   return { providers: successfulProviders, templates: total };
 }
