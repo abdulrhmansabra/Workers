@@ -22,6 +22,17 @@ id = "e198b0f6af5e40c6bb98078d44562844"
 [triggers]
 crons = ["0 3 * * *"]
 
+# Create this Queue before deploying: wrangler queues create crun-template-sync.
+[[queues.producers]]
+binding = "CRUN_TEMPLATE_QUEUE"
+queue = "crun-template-sync"
+
+[[queues.consumers]]
+queue = "crun-template-sync"
+max_batch_size = 5
+max_batch_timeout = 5
+max_retries = 5
+
 # Explicit parent table retained from main to resolve the append conflict.
 [previews]
 
