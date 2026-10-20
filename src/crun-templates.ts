@@ -92,7 +92,17 @@ export async function syncCrunTemplateCatalog(env: Env): Promise<{ providers: nu
           if (!info) continue;
           const docId = (source.provider + "_" + info.key).replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 140);
           const path = "crun_template_catalog/" + docId;
-          const existing = await getDoc(env, path);
+          let existing: { id: string; data: Record<string, unknown> } | null = null;
+          let existingReadFailed = false;
+          try {
+            existing = await getDoc(env, path);
+          } catch (e) {
+            existingReadFailed = true;
+            safeError("Catalog doc read failed, will upsert", {
+              path,
+              error: e instanceof Error ? e.message.slice(0, 80) : "unknown",
+            });
+          }
           const record = {
             id: docId,
             provider: source.provider,
@@ -105,14 +115,24 @@ export async function syncCrunTemplateCatalog(env: Env): Promise<{ providers: nu
             raw_catalog: JSON.stringify(item),
             last_synced_at: Date.now(),
           };
-          if (existing) await updateDoc(env, path, record);
+          if (existing || existingReadFailed) await updateDoc(env, path, record);
           else await setDoc(env, path, record);
 
           // Use the same stable ID in templates so the app/server can address it.
           // Never overwrite admin-controlled pricing, activation, or options.
           const templatePath = "templates/" + docId;
-          const templateDoc = await getDoc(env, templatePath);
-          if (templateDoc) {
+          let templateDoc: { id: string; data: Record<string, unknown> } | null = null;
+          let templateReadFailed = false;
+          try {
+            templateDoc = await getDoc(env, templatePath);
+          } catch (e) {
+            templateReadFailed = true;
+            safeError("Template doc read failed, will update provider cost", {
+              path: templatePath,
+              error: e instanceof Error ? e.message.slice(0, 80) : "unknown",
+            });
+          }
+          if (templateDoc || templateReadFailed) {
             await updateDoc(env, templatePath, { provider_cost: record.provider_cost });
           } else {
             const now = Date.now();
