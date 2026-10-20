@@ -21,3 +21,5 @@ id = "e198b0f6af5e40c6bb98078d44562844"
 
 [triggers]
 crons = ["0 3 * * *"]
+
+[previews]
