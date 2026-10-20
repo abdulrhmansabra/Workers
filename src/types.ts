@@ -62,9 +62,20 @@ export interface TemplateDoc {
   crun_provider?: "kling" | "bytedance" | "vidu";
   crun_template_id?: string;
   is_active: boolean;
+  category?: string;
   preview_video_url: string;
+  thumbnail_url?: string;
   reference_video_url?: string;
   base_cost: number;
+  provider_cost?: number;
+  customization_config?: {
+    allow_image_input?: boolean;
+    allow_prompt?: boolean;
+    allow_reference_video?: boolean;
+  };
+  aspect_ratio_options?: string[];
+  duration_options?: number[];
+  resolution_options?: string[];
   option_pricing?: Record<string, Record<string, number>>;
   supported_options: TemplateOption[];
   created_at: number;

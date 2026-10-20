@@ -59,6 +59,9 @@ export async function getValidTemplate(env: Env, templateId: string): Promise<Te
   const template = doc.data as unknown as TemplateDoc;
   template.id = doc.id;
   if (template.is_active !== true) throw new HttpError(400, "TEMPLATE_INACTIVE", "This template is no longer available");
+  if (!Number.isFinite(template.base_cost) || template.base_cost <= 0) {
+    throw new HttpError(400, "TEMPLATE_PRICE_NOT_CONFIGURED", "Template must have a positive base_cost before it can be used");
+  }
 
   // New templates point directly to a CRUN template catalog entry. Legacy
   // model_id documents remain readable during migration; model_id is not removed.
