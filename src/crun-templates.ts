@@ -170,32 +170,34 @@ export async function syncCrunTemplatePage(env: Env, provider: CatalogProvider, 
 
   const unified = await getDoc(env, CATALOG_DOC);
   const templates = object(unified?.data.templates);
-  const writes: Array<{ path: string; data: RecordValue; updateMaskFields: string[] }> = [];
   const providerFields = [
     "id", "name", "description", "category", "provider", "provider_template_id",
     "provider_cost", "cover_url", "preview_video_url", "raw_catalog", "last_synced_at",
   ];
 
+  const mergedTemplates: RecordValue = {};
+  const updateMaskFields = ["catalog_version", "updated_at"];
   for (const { docId, record } of pending) {
     const current = object(templates[docId]);
     const isExisting = Object.keys(current).length > 0;
     const patch: RecordValue = {};
-    const mask = ["updated_at"];
     if (isExisting) {
-      for (const key of providerFields) patch[key] = record[key];
-      mask.splice(0, 1, ...providerFields.map((key) => `templates.${docId}.${key}`), "updated_at");
+      for (const key of providerFields) {
+        patch[key] = record[key];
+        updateMaskFields.push(`templates.${docId}.${key}`);
+      }
     } else {
       Object.assign(patch, record);
-      mask.splice(0, 1, `templates.${docId}`, "updated_at");
+      updateMaskFields.push(`templates.${docId}`);
     }
-    writes.push({
-      path: CATALOG_DOC,
-      data: { catalog_version: 1, updated_at: Date.now(), templates: { [docId]: patch } },
-      updateMaskFields: mask,
-    });
+    mergedTemplates[docId] = patch;
   }
 
-  await commitWrites(env, writes);
+  await commitWrites(env, [{
+    path: CATALOG_DOC,
+    data: { catalog_version: 1, updated_at: Date.now(), templates: mergedTemplates },
+    updateMaskFields,
+  }]);
   safeLog("CRUN catalog page synced into unified document", { provider, page, count: pending.length, firestoreWrites: writes.length });
   return pending.length;
 }
