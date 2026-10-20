@@ -106,6 +106,10 @@ export async function enqueueCrunTemplateSync(env: Env): Promise<{ providers: nu
     for (let page = 1; page <= pageCount; page++) messages.push({ provider: source.provider, page });
   }
 
+  // Keep the producer below the Workers subrequest budget even for unusually large catalogs.
+  // A maximum of 4,000 messages means at most 40 sendBatch calls, plus three CRUN discovery calls.
+  if (messages.length > 4000) throw new Error("CRUN_CATALOG_QUEUE_BATCH_LIMIT_EXCEEDED");
+
   // Queue sendBatch accepts at most 100 messages per call. Keep each send bounded.
   for (let offset = 0; offset < messages.length; offset += 100) {
     const chunk = messages.slice(offset, offset + 100);
