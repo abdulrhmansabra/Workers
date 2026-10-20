@@ -189,18 +189,19 @@ export async function syncCrunTemplatePage(env: Env, provider: CatalogProvider, 
     data: RecordValue;
     updateMaskFields?: string[];
   }> = [];
+  const catalogPaths = pending.map(({ docId }) => "crun_template_catalog/" + docId);
+  const existingCatalogDocs = await batchGetDocs(env, catalogPaths);
+  const providerFields = [
+    "id", "name", "description", "category", "provider",
+    "provider_template_id", "provider_cost", "cover_url",
+    "preview_video_url", "raw_catalog", "last_synced_at",
+  ];
 
   for (const { docId, record } of pending) {
     const catalogPath = "crun_template_catalog/" + docId;
     // Catalog sync owns provider-derived fields. Keep administrator-owned
     // pricing/activation/customization fields intact on subsequent syncs.
-    const providerFields = [
-      "id", "name", "description", "category", "provider",
-      "provider_template_id", "provider_cost", "cover_url",
-      "preview_video_url", "raw_catalog", "last_synced_at",
-    ];
-    const existing = await batchGetDocs(env, [catalogPath]);
-    if (existing.has(catalogPath)) {
+    if (existingCatalogDocs.has(catalogPath)) {
       writes.push({
         path: catalogPath,
         data: Object.fromEntries(providerFields.map((key) => [key, record[key]])),
