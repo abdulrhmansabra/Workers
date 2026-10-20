@@ -1,6 +1,6 @@
 import type { Env, TemplateDoc } from "../types";
 import { json, HttpError } from "../utils";
-import { getDoc, queryCollection } from "../firestore";
+import { queryCollection } from "../firestore";
 import { getValidTemplate } from "../pricing";
 import type { RouteHandler } from "../router";
 
