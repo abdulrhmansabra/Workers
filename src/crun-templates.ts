@@ -102,7 +102,7 @@ export async function syncCrunTemplateCatalog(env: Env): Promise<{ providers: nu
             cover_url: info.cover,
             preview_video_url: info.preview,
             provider_cost: Number(item.credit ?? item.credits ?? item.Credit ?? (Array.isArray(item.ConsumeItems) ? object(item.ConsumeItems[0]).Credit : 0)) || 0,
-            raw_catalog: item,
+            raw_catalog: JSON.stringify(item),
             last_synced_at: Date.now(),
           };
           if (existing) await updateDoc(env, path, record);
