@@ -54,31 +54,31 @@ export function calculatePrice(template: TemplateDoc, options: Record<string, un
 export const ALLOWED_MODELS = new Set<string>([]);
 
 export async function getValidTemplate(env: Env, templateId: string): Promise<TemplateDoc> {
-  const doc = await getDoc(env, `templates/${templateId}`);
+  const doc = await getDoc(env, `crun_template_catalog/${templateId}`);
   if (!doc) throw new HttpError(404, "TEMPLATE_NOT_FOUND", `Template not found: ${templateId}`);
-  const template = doc.data as unknown as TemplateDoc;
-  template.id = doc.id;
+  const data = doc.data;
+  const template = {
+    ...data,
+    id: doc.id,
+    crun_provider: data.provider,
+    crun_template_id: data.provider_template_id,
+    thumbnail_url: data.cover_url,
+    preview_video_url: typeof data.preview_video_url === "string" ? data.preview_video_url : "",
+    description: typeof data.description === "string" ? data.description : "",
+    base_cost: typeof data.base_cost === "number" ? data.base_cost : 0,
+    supported_options: Array.isArray(data.supported_options) ? data.supported_options : [],
+    created_at: typeof data.created_at === "number" ? data.created_at : Date.now(),
+    updated_at: typeof data.updated_at === "number" ? data.updated_at : Date.now(),
+  } as unknown as TemplateDoc;
   if (template.is_active !== true) throw new HttpError(400, "TEMPLATE_INACTIVE", "This template is no longer available");
   if (!Number.isFinite(template.base_cost) || template.base_cost <= 0) {
     throw new HttpError(400, "TEMPLATE_PRICE_NOT_CONFIGURED", "Template must have a positive base_cost before it can be used");
   }
-
-  // New templates point directly to a CRUN template catalog entry. Legacy
-  // model_id documents remain readable during migration; model_id is not removed.
-  if (template.crun_provider && template.crun_template_id) {
-    if (!["kling", "bytedance", "vidu"].includes(template.crun_provider)) {
-      throw new HttpError(400, "TEMPLATE_PROVIDER_INVALID", "Unsupported CRUN template provider");
-    }
-    return template;
+  if (!template.crun_provider || !template.crun_template_id ||
+      !["kling", "bytedance", "vidu"].includes(template.crun_provider)) {
+    throw new HttpError(400, "TEMPLATE_NOT_CONFIGURED", "Template provider settings are missing or invalid");
   }
-  if (template.model_id) {
-    const modelDoc = await getDoc(env, `models/${template.model_id}`);
-    if (modelDoc?.data.is_active === true &&
-        String(modelDoc.data.provider ?? "").toLowerCase() === "crun" &&
-        typeof modelDoc.data.provider_model_id === "string" &&
-        modelDoc.data.provider_model_id.trim()) return template;
-  }
-  throw new HttpError(400, "TEMPLATE_NOT_CONFIGURED", "Template must have CRUN template provider settings or a configured legacy model");
+  return template;
 }
 
 export function registerAllowedModel(modelId: string): void { ALLOWED_MODELS.add(modelId); }
