@@ -191,8 +191,6 @@ export async function syncCrunTemplatePage(env: Env, provider: CatalogProvider, 
         : fallback;
     const currentBoolean = (key: string, fallback: boolean): boolean =>
       typeof current[key] === "boolean" ? current[key] as boolean : fallback;
-    const currentString = (key: string, fallback: string): string =>
-      typeof current[key] === "string" ? current[key] as string : fallback;
     const currentNullableTimestamp = (key: string): number | null =>
       typeof current[key] === "number" && Number.isFinite(current[key] as number)
         ? current[key] as number
