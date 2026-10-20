@@ -138,17 +138,43 @@ export async function syncCrunTemplatePage(env: Env, provider: CatalogProvider, 
     if (!info) continue;
     const docId = (provider + "_" + info.key).replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 140);
     const consumeItems = Array.isArray(item.ConsumeItems) ? item.ConsumeItems : [];
-    const record = {
+    const aspectValues = item.aspect_ratio ?? item.SupportAspectRatio;
+    const durationValues = item.duration;
+    const resolutionValues = item.resolution;
+    const consumeResolutions = consumeItems.map((entry) => object(entry).Resolution).filter((value) => value !== undefined && value !== null);
+    const asOptions = (value: unknown): unknown[] => Array.isArray(value) ? value : typeof value === "string" && value.trim() ? value.split(",").map((part) => part.trim()).filter(Boolean) : [];
+    const aspectOptions = asOptions(aspectValues);
+    const durationOptions = asOptions(durationValues);
+    const resolutionOptions = [...asOptions(resolutionValues), ...consumeResolutions].filter((value, index, all) => all.indexOf(value) === index);
+    const now = Date.now();
+    const record: RecordValue = {
       id: docId,
+      name: info.name,
+      description: string(item.description ?? item.info_text),
+      category: string(item.category ?? item.category_name ?? item.Category ?? item.TemplateType),
       provider,
       provider_template_id: info.providerId,
-      name: info.name,
-      category: string(item.category ?? item.category_name ?? item.Category ?? item.TemplateType),
+      provider_cost: Number(item.credit ?? item.credits ?? item.Credit ?? object(consumeItems[0]).Credit) || 0,
+      base_cost: 0,
       cover_url: info.cover,
       preview_video_url: info.preview,
-      provider_cost: Number(item.credit ?? item.credits ?? item.Credit ?? object(consumeItems[0]).Credit) || 0,
-      raw_catalog: JSON.stringify(item),
-      last_synced_at: Date.now(),
+      is_active: false,
+      customization_config: {
+        allow_image_input: false,
+        allow_prompt: false,
+        allow_reference_video: false,
+      },
+      aspect_ratio_options: aspectOptions,
+      duration_options: durationOptions,
+      resolution_options: resolutionOptions,
+      option_pricing: {},
+      supported_options: [],
+      pricing_version: 1,
+      sort_order: 999,
+      raw_catalog: item,
+      created_at: now,
+      updated_at: now,
+      last_synced_at: now,
     };
     pending.push({ docId, info, record });
   }
@@ -158,64 +184,30 @@ export async function syncCrunTemplatePage(env: Env, provider: CatalogProvider, 
     return 0;
   }
 
-  const paths = pending.flatMap(({ docId }) => [
-    "crun_template_catalog/" + docId,
-    "templates/" + docId,
-  ]);
-  const existingDocs = await batchGetDocs(env, paths);
   const writes: Array<{
     path: string;
     data: RecordValue;
     updateMaskFields?: string[];
-    exists?: boolean;
   }> = [];
 
-  for (const { docId, info, record } of pending) {
+  for (const { docId, record } of pending) {
     const catalogPath = "crun_template_catalog/" + docId;
-    const templatePath = "templates/" + docId;
-    writes.push({ path: catalogPath, data: record, updateMaskFields: Object.keys(record) });
-
-    // Keep administrator-owned template configuration untouched.
-    if (existingDocs.has(templatePath)) {
+    // Catalog sync owns provider-derived fields. Keep administrator-owned
+    // pricing/activation/customization fields intact on subsequent syncs.
+    const providerFields = [
+      "id", "name", "description", "category", "provider",
+      "provider_template_id", "provider_cost", "cover_url",
+      "preview_video_url", "raw_catalog", "last_synced_at",
+    ];
+    const existing = await batchGetDocs(env, [catalogPath]);
+    if (existing.has(catalogPath)) {
       writes.push({
-        path: templatePath,
-        data: { provider_cost: record.provider_cost },
-        updateMaskFields: ["provider_cost"],
+        path: catalogPath,
+        data: Object.fromEntries(providerFields.map((key) => [key, record[key]])),
+        updateMaskFields: providerFields,
       });
     } else {
-      const now = Date.now();
-      writes.push({
-        path: templatePath,
-        exists: false,
-        data: {
-          id: docId,
-          name: info.name,
-          description: "",
-          category: "video",
-          crun_provider: provider,
-          crun_template_id: info.providerId,
-          is_active: false,
-          base_cost: 0,
-          provider_cost: record.provider_cost,
-          preview_video_url: info.preview,
-          thumbnail_url: info.cover,
-          reference_video_url: "",
-          customization_config: {
-            allow_image_input: false,
-            allow_prompt: true,
-            allow_reference_video: false,
-          },
-          aspect_ratio_options: [],
-          duration_options: [],
-          resolution_options: [],
-          option_pricing: {},
-          supported_options: [],
-          pricing_version: 1,
-          sort_order: 999,
-          created_at: now,
-          updated_at: now,
-        },
-      });
+      writes.push({ path: catalogPath, data: record });
     }
   }
 
