@@ -1,9 +1,10 @@
 import type { Env, CrunTemplateSyncMessage } from "./types";
-import { batchGetDocs, commitWrites } from "./firestore";
-import { safeError, safeLog } from "./utils";
+import { batchGetDocs, commitWrites, getDoc } from "./firestore";
+import { safeLog } from "./utils";
 
 export type CatalogProvider = "kling" | "bytedance" | "vidu";
 type RecordValue = Record<string, unknown>;
+const CATALOG_DOC = "crun_template_catalog/catalog_v1";
 
 const SOURCES: Array<{ provider: CatalogProvider; path: string }> = [
   { provider: "kling", path: "/api/v1/client/job/kling-templates" },
@@ -18,6 +19,10 @@ function object(value: unknown): RecordValue {
 }
 function string(value: unknown): string {
   return typeof value === "string" || typeof value === "number" ? String(value) : "";
+}
+function currentStringFromRecord(record: RecordValue, key: string): string {
+  const value = record[key];
+  return typeof value === "string" ? value : "";
 }
 function catalogItems(data: RecordValue): unknown[] {
   const candidates: RecordValue[] = [data];
@@ -62,9 +67,7 @@ function identity(provider: CatalogProvider, item: RecordValue): { key: string; 
     : provider === "bytedance" ? string(item.Title_en ?? item.Title ?? item.name) || providerId
     : string(item.name ?? item.title ?? item.template_name) || providerId;
   return {
-    key: providerId,
-    providerId,
-    name,
+    key: providerId, providerId, name,
     cover: string(item.cover_url ?? item.Cover ?? item.cover ?? item.coverUrl),
     preview: string(item.video_url ?? item.PreviewVideo ?? item.preview_video_url ?? item.previewVideo ?? item.video),
   };
@@ -88,29 +91,21 @@ async function requestCatalog(env: Env, path: string, page: number): Promise<Rec
   return object(payload.data);
 }
 
-/** Discover every provider's page count, then enqueue one independent task per page. */
+/** Discover page counts and enqueue bounded page jobs. */
 export async function enqueueCrunTemplateSync(env: Env): Promise<{ providers: number; pages: number }> {
   if (!env.CRUN_TEMPLATE_QUEUE) throw new Error("CRUN_TEMPLATE_QUEUE binding is not configured");
   let pagesQueued = 0;
   const messages: CrunTemplateSyncMessage[] = [];
-
   for (const source of SOURCES) {
     const firstPage = await requestCatalog(env, source.path, 1);
     const items = catalogItems(firstPage);
     const total = totalCount(firstPage);
-    if (total === null && items.length >= PAGE_SIZE) {
-      throw new Error("CRUN_CATALOG_TOTAL_MISSING: " + source.provider);
-    }
+    if (total === null && items.length >= PAGE_SIZE) throw new Error("CRUN_CATALOG_TOTAL_MISSING: " + source.provider);
     const pageCount = Math.max(1, Math.ceil((total ?? items.length) / PAGE_SIZE));
     if (pageCount > MAX_DISCOVERED_PAGES) throw new Error("CRUN_CATALOG_PAGE_COUNT_INVALID");
     for (let page = 1; page <= pageCount; page++) messages.push({ provider: source.provider, page });
   }
-
-  // Keep the producer below the Workers subrequest budget even for unusually large catalogs.
-  // A maximum of 4,000 messages means at most 40 sendBatch calls, plus three CRUN discovery calls.
   if (messages.length > 4000) throw new Error("CRUN_CATALOG_QUEUE_BATCH_LIMIT_EXCEEDED");
-
-  // Queue sendBatch accepts at most 100 messages per call. Keep each send bounded.
   for (let offset = 0; offset < messages.length; offset += 100) {
     const chunk = messages.slice(offset, offset + 100);
     await env.CRUN_TEMPLATE_QUEUE.sendBatch(chunk.map((body) => ({ body })));
@@ -120,17 +115,13 @@ export async function enqueueCrunTemplateSync(env: Env): Promise<{ providers: nu
   return { providers: SOURCES.length, pages: pagesQueued };
 }
 
-/** Processes exactly one provider page, so each Queue invocation has a bounded subrequest count. */
+/** Writes each template into its own map entry in catalog_v1, without replacing other entries. */
 export async function syncCrunTemplatePage(env: Env, provider: CatalogProvider, page: number): Promise<number> {
   if (!Number.isInteger(page) || page < 1 || page > MAX_DISCOVERED_PAGES) throw new Error("CRUN_CATALOG_PAGE_INVALID");
   const source = sourceFor(provider);
   const data = await requestCatalog(env, source.path, page);
   const items = catalogItems(data);
-  const pending: Array<{
-    docId: string;
-    info: { key: string; name: string; cover: string; preview: string; providerId: string };
-    record: RecordValue;
-  }> = [];
+  const pending: Array<{ docId: string; record: RecordValue }> = [];
 
   for (const raw of items) {
     const item = object(raw);
@@ -138,19 +129,42 @@ export async function syncCrunTemplatePage(env: Env, provider: CatalogProvider, 
     if (!info) continue;
     const docId = (provider + "_" + info.key).replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 140);
     const consumeItems = Array.isArray(item.ConsumeItems) ? item.ConsumeItems : [];
-    const record = {
+    const asOptions = (value: unknown): unknown[] => Array.isArray(value) ? value : typeof value === "string" && value.trim() ? value.split(",").map((part) => part.trim()).filter(Boolean) : [];
+    const aspectOptions = asOptions(item.aspect_ratio ?? item.SupportAspectRatio);
+    const durationOptions = asOptions(item.duration);
+    const consumeResolutions = consumeItems.map((entry) => object(entry).Resolution).filter((value) => value !== undefined && value !== null);
+    const resolutionOptions = [...asOptions(item.resolution), ...consumeResolutions].filter((value, index, all) => all.indexOf(value) === index);
+    const rawCatalog = item.raw_catalog ?? item;
+    const rawMap = rawCatalog && typeof rawCatalog === "object" && !Array.isArray(rawCatalog)
+      ? rawCatalog as RecordValue
+      : { _raw_original_value: rawCatalog };
+    const now = Date.now();
+    const record: RecordValue = {
       id: docId,
+      name: info.name,
+      description: string(item.description ?? item.info_text),
+      category: string(item.category ?? item.category_name ?? item.Category ?? item.TemplateType),
       provider,
       provider_template_id: info.providerId,
-      name: info.name,
-      category: string(item.category ?? item.category_name ?? item.Category ?? item.TemplateType),
+      provider_cost: Number(item.credit ?? item.credits ?? item.Credit ?? object(consumeItems[0]).Credit) || 0,
+      base_cost: 0,
       cover_url: info.cover,
       preview_video_url: info.preview,
-      provider_cost: Number(item.credit ?? item.credits ?? item.Credit ?? object(consumeItems[0]).Credit) || 0,
-      raw_catalog: JSON.stringify(item),
-      last_synced_at: Date.now(),
+      is_active: false,
+      customization_config: { allow_image_input: false, allow_prompt: false, allow_reference_video: false },
+      aspect_ratio_options: aspectOptions,
+      duration_options: durationOptions,
+      resolution_options: resolutionOptions,
+      option_pricing: {},
+      supported_options: [],
+      pricing_version: 1,
+      sort_order: 0,
+      raw_catalog: rawMap,
+      created_at: null,
+      updated_at: null,
+      last_synced_at: now,
     };
-    pending.push({ docId, info, record });
+    pending.push({ docId, record });
   }
 
   if (pending.length === 0) {
@@ -158,68 +172,70 @@ export async function syncCrunTemplatePage(env: Env, provider: CatalogProvider, 
     return 0;
   }
 
-  const paths = pending.flatMap(({ docId }) => [
-    "crun_template_catalog/" + docId,
-    "templates/" + docId,
-  ]);
-  const existingDocs = await batchGetDocs(env, paths);
-  const writes: Array<{
-    path: string;
-    data: RecordValue;
-    updateMaskFields?: string[];
-    exists?: boolean;
-  }> = [];
+  const unified = await getDoc(env, CATALOG_DOC);
+  const templates = object(unified?.data.templates);
+  const mergedTemplates: RecordValue = {};
+  const updateMaskFields = ["catalog_version", "schema_version", "updated_at"];
 
-  for (const { docId, info, record } of pending) {
-    const catalogPath = "crun_template_catalog/" + docId;
-    const templatePath = "templates/" + docId;
-    writes.push({ path: catalogPath, data: record, updateMaskFields: Object.keys(record) });
+  for (const { docId, record } of pending) {
+    const current = object(templates[docId]);
+    const customization = object(current.customization_config);
+    const existingOptions = (key: string, incoming: unknown[]): unknown[] => {
+      const currentValue = current[key];
+      if (Array.isArray(currentValue)) return incoming.length > 0 ? incoming : currentValue;
+      return incoming;
+    };
+    const currentNumber = (key: string, fallback: number): number =>
+      typeof current[key] === "number" && Number.isFinite(current[key] as number)
+        ? current[key] as number
+        : fallback;
+    const currentBoolean = (key: string, fallback: boolean): boolean =>
+      typeof current[key] === "boolean" ? current[key] as boolean : fallback;
+    const currentNullableTimestamp = (key: string): number | null =>
+      typeof current[key] === "number" && Number.isFinite(current[key] as number)
+        ? current[key] as number
+        : null;
 
-    // Keep administrator-owned template configuration untouched.
-    if (existingDocs.has(templatePath)) {
-      writes.push({
-        path: templatePath,
-        data: { provider_cost: record.provider_cost },
-        updateMaskFields: ["provider_cost"],
-      });
-    } else {
-      const now = Date.now();
-      writes.push({
-        path: templatePath,
-        exists: false,
-        data: {
-          id: docId,
-          name: info.name,
-          description: "",
-          category: "video",
-          crun_provider: provider,
-          crun_template_id: info.providerId,
-          is_active: false,
-          base_cost: 0,
-          provider_cost: record.provider_cost,
-          preview_video_url: info.preview,
-          thumbnail_url: info.cover,
-          reference_video_url: "",
-          customization_config: {
-            allow_image_input: false,
-            allow_prompt: true,
-            allow_reference_video: false,
-          },
-          aspect_ratio_options: [],
-          duration_options: [],
-          resolution_options: [],
-          option_pricing: {},
-          supported_options: [],
-          pricing_version: 1,
-          sort_order: 999,
-          created_at: now,
-          updated_at: now,
-        },
-      });
+    // Refresh provider-owned fields, while preserving admin-controlled pricing,
+    // activation, customization, and ordering values already configured in Firestore.
+    const normalized: RecordValue = {
+      ...current,
+      ...record,
+      base_cost: currentNumber("base_cost", 0),
+      is_active: currentBoolean("is_active", false),
+      customization_config: {
+        allow_image_input: typeof customization.allow_image_input === "boolean" ? customization.allow_image_input : false,
+        allow_prompt: typeof customization.allow_prompt === "boolean" ? customization.allow_prompt : false,
+        allow_reference_video: typeof customization.allow_reference_video === "boolean" ? customization.allow_reference_video : false,
+      },
+      aspect_ratio_options: existingOptions("aspect_ratio_options", Array.isArray(record.aspect_ratio_options) ? record.aspect_ratio_options : []),
+      duration_options: existingOptions("duration_options", Array.isArray(record.duration_options) ? record.duration_options : []),
+      resolution_options: existingOptions("resolution_options", Array.isArray(record.resolution_options) ? record.resolution_options : []),
+      supported_options: Array.isArray(current.supported_options) ? current.supported_options : [],
+      option_pricing: current.option_pricing && typeof current.option_pricing === "object" && !Array.isArray(current.option_pricing) ? current.option_pricing : {},
+      pricing_version: currentNumber("pricing_version", 1),
+      sort_order: currentNumber("sort_order", 0),
+      created_at: current.created_at === null || current.created_at === undefined ? null : currentNullableTimestamp("created_at"),
+      updated_at: current.updated_at === null || current.updated_at === undefined ? null : currentNullableTimestamp("updated_at"),
+      last_synced_at: typeof record.last_synced_at === "number" ? record.last_synced_at : Date.now(),
+      raw_catalog: object(record.raw_catalog),
+    };
+
+    // Normalize required strings even if an old or malformed value was present.
+    for (const key of ["id", "name", "category", "provider", "provider_template_id", "cover_url", "preview_video_url", "description"] as const) {
+      normalized[key] = currentStringFromRecord(record, key);
     }
+    mergedTemplates[docId] = normalized;
+    // Replace this template map entry as one field path. The normalized object
+    // includes existing admin values, so other templates and admin settings remain intact.
+    updateMaskFields.push(`templates.${docId}`);
   }
 
-  await commitWrites(env, writes);
-  safeLog("CRUN catalog page synced", { provider, page, count: pending.length, firestoreWrites: writes.length });
+  await commitWrites(env, [{
+    path: CATALOG_DOC,
+    data: { catalog_version: 2, schema_version: 2, updated_at: Date.now(), templates: mergedTemplates },
+    updateMaskFields,
+  }]);
+  safeLog("CRUN catalog page synced into unified document", { provider, page, count: pending.length, firestoreWrites: 1 });
   return pending.length;
 }

@@ -65,6 +65,10 @@ export interface TemplateDoc {
   name: string;
   description: string;
   model_id?: string;
+  provider?: "kling" | "bytedance" | "vidu";
+  provider_template_id?: string;
+  cover_url?: string;
+  raw_catalog?: Record<string, unknown>;
   crun_provider?: "kling" | "bytedance" | "vidu";
   crun_template_id?: string;
   is_active: boolean;
@@ -80,7 +84,7 @@ export interface TemplateDoc {
     allow_reference_video?: boolean;
   };
   aspect_ratio_options?: string[];
-  duration_options?: number[];
+  duration_options?: (string | number)[];
   resolution_options?: string[];
   option_pricing?: Record<string, Record<string, number>>;
   supported_options: TemplateOption[];
