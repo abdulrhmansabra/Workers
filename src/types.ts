@@ -17,6 +17,12 @@ export interface Env {
   FIREBASE_SERVICE_ACCOUNT: string;
   R2_BUCKET: R2Bucket;
   KV_CACHE: KVNamespace;
+  CRUN_TEMPLATE_QUEUE: Queue<CrunTemplateSyncMessage>;
+}
+
+export interface CrunTemplateSyncMessage {
+  provider: "kling" | "bytedance" | "vidu";
+  page: number;
 }
 
 export interface DecodedIdToken {
