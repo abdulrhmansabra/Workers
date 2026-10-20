@@ -2,6 +2,7 @@ import type { Env, TemplateDoc } from "./types";
 import { getDoc } from "./firestore";
 import { HttpError } from "./utils";
 
+const CATALOG_DOC = "crun_template_catalog/catalog_v1";
 export interface PriceBreakdown { base: number; options: Record<string, number>; total: number; }
 
 export function validateOptions(template: TemplateDoc, options: Record<string, unknown>): void {
@@ -54,12 +55,16 @@ export function calculatePrice(template: TemplateDoc, options: Record<string, un
 export const ALLOWED_MODELS = new Set<string>([]);
 
 export async function getValidTemplate(env: Env, templateId: string): Promise<TemplateDoc> {
-  const doc = await getDoc(env, `crun_template_catalog/${templateId}`);
-  if (!doc) throw new HttpError(404, "TEMPLATE_NOT_FOUND", `Template not found: ${templateId}`);
-  const data = doc.data;
+  const catalog = await getDoc(env, CATALOG_DOC);
+  const templates = catalog?.data.templates;
+  const map = templates && typeof templates === "object" && !Array.isArray(templates)
+    ? templates as Record<string, Record<string, unknown>>
+    : {};
+  const data = map[templateId];
+  if (!data) throw new HttpError(404, "TEMPLATE_NOT_FOUND", `Template not found: ${templateId}`);
   const template = {
     ...data,
-    id: doc.id,
+    id: templateId,
     crun_provider: data.provider,
     crun_template_id: data.provider_template_id,
     thumbnail_url: data.cover_url,
