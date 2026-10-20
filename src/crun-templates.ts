@@ -20,6 +20,10 @@ function object(value: unknown): RecordValue {
 function string(value: unknown): string {
   return typeof value === "string" || typeof value === "number" ? String(value) : "";
 }
+function currentStringFromRecord(record: RecordValue, key: string): string {
+  const value = record[key];
+  return typeof value === "string" ? value : "";
+}
 function catalogItems(data: RecordValue): unknown[] {
   const candidates: RecordValue[] = [data];
   for (const key of ["data", "result", "catalog", "response"]) {
@@ -133,7 +137,7 @@ export async function syncCrunTemplatePage(env: Env, provider: CatalogProvider, 
     const rawCatalog = item.raw_catalog ?? item;
     const rawMap = rawCatalog && typeof rawCatalog === "object" && !Array.isArray(rawCatalog)
       ? rawCatalog as RecordValue
-      : { original_value: rawCatalog };
+      : { _raw_original_value: rawCatalog };
     const now = Date.now();
     const record: RecordValue = {
       id: docId,
@@ -170,32 +174,68 @@ export async function syncCrunTemplatePage(env: Env, provider: CatalogProvider, 
 
   const unified = await getDoc(env, CATALOG_DOC);
   const templates = object(unified?.data.templates);
-  const providerFields = [
-    "id", "name", "description", "category", "provider", "provider_template_id",
-    "provider_cost", "cover_url", "preview_video_url", "raw_catalog", "last_synced_at",
-  ];
-
   const mergedTemplates: RecordValue = {};
-  const updateMaskFields = ["catalog_version", "updated_at"];
+  const updateMaskFields = ["catalog_version", "schema_version", "updated_at"];
+
   for (const { docId, record } of pending) {
     const current = object(templates[docId]);
-    const isExisting = Object.keys(current).length > 0;
-    const patch: RecordValue = {};
-    if (isExisting) {
-      for (const key of providerFields) {
-        patch[key] = record[key];
-        updateMaskFields.push(`templates.${docId}.${key}`);
-      }
-    } else {
-      Object.assign(patch, record);
-      updateMaskFields.push(`templates.${docId}`);
+    const customization = object(current.customization_config);
+    const existingOptions = (key: string, incoming: unknown[]): unknown[] => {
+      const currentValue = current[key];
+      if (Array.isArray(currentValue)) return incoming.length > 0 ? incoming : currentValue;
+      return incoming;
+    };
+    const currentNumber = (key: string, fallback: number): number =>
+      typeof current[key] === "number" && Number.isFinite(current[key] as number)
+        ? current[key] as number
+        : fallback;
+    const currentBoolean = (key: string, fallback: boolean): boolean =>
+      typeof current[key] === "boolean" ? current[key] as boolean : fallback;
+    const currentString = (key: string, fallback: string): string =>
+      typeof current[key] === "string" ? current[key] as string : fallback;
+    const currentNullableTimestamp = (key: string): number | null =>
+      typeof current[key] === "number" && Number.isFinite(current[key] as number)
+        ? current[key] as number
+        : null;
+
+    // Refresh provider-owned fields, while preserving admin-controlled pricing,
+    // activation, customization, and ordering values already configured in Firestore.
+    const normalized: RecordValue = {
+      ...current,
+      ...record,
+      base_cost: currentNumber("base_cost", 0),
+      is_active: currentBoolean("is_active", false),
+      customization_config: {
+        allow_image_input: typeof customization.allow_image_input === "boolean" ? customization.allow_image_input : false,
+        allow_prompt: typeof customization.allow_prompt === "boolean" ? customization.allow_prompt : false,
+        allow_reference_video: typeof customization.allow_reference_video === "boolean" ? customization.allow_reference_video : false,
+      },
+      aspect_ratio_options: existingOptions("aspect_ratio_options", Array.isArray(record.aspect_ratio_options) ? record.aspect_ratio_options : []),
+      duration_options: existingOptions("duration_options", Array.isArray(record.duration_options) ? record.duration_options : []),
+      resolution_options: existingOptions("resolution_options", Array.isArray(record.resolution_options) ? record.resolution_options : []),
+      supported_options: Array.isArray(current.supported_options) ? current.supported_options : [],
+      option_pricing: current.option_pricing && typeof current.option_pricing === "object" && !Array.isArray(current.option_pricing) ? current.option_pricing : {},
+      pricing_version: currentNumber("pricing_version", 1),
+      sort_order: currentNumber("sort_order", 0),
+      created_at: current.created_at === null || current.created_at === undefined ? null : currentNullableTimestamp("created_at"),
+      updated_at: current.updated_at === null || current.updated_at === undefined ? null : currentNullableTimestamp("updated_at"),
+      last_synced_at: typeof record.last_synced_at === "number" ? record.last_synced_at : Date.now(),
+      raw_catalog: object(record.raw_catalog),
+    };
+
+    // Normalize required strings even if an old or malformed value was present.
+    for (const key of ["id", "name", "category", "provider", "provider_template_id", "cover_url", "preview_video_url", "description"] as const) {
+      normalized[key] = currentStringFromRecord(record, key);
     }
-    mergedTemplates[docId] = patch;
+    mergedTemplates[docId] = normalized;
+    // Replace this template map entry as one field path. The normalized object
+    // includes existing admin values, so other templates and admin settings remain intact.
+    updateMaskFields.push(`templates.${docId}`);
   }
 
   await commitWrites(env, [{
     path: CATALOG_DOC,
-    data: { catalog_version: 1, updated_at: Date.now(), templates: mergedTemplates },
+    data: { catalog_version: 2, schema_version: 2, updated_at: Date.now(), templates: mergedTemplates },
     updateMaskFields,
   }]);
   safeLog("CRUN catalog page synced into unified document", { provider, page, count: pending.length, firestoreWrites: 1 });
