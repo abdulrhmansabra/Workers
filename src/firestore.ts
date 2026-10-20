@@ -68,6 +68,7 @@ export function toFirestoreValue(value: unknown): FirestoreValue {
 }
 
 export function fromFirestoreValue(value: FirestoreValue): unknown {
+  if (!value || typeof value !== "object") return undefined;
   if (value.nullValue !== undefined) return null;
   if (value.booleanValue !== undefined) return value.booleanValue as boolean;
   if (value.integerValue !== undefined) return parseInt(value.integerValue as string, 10);
@@ -75,7 +76,7 @@ export function fromFirestoreValue(value: FirestoreValue): unknown {
   if (value.stringValue !== undefined) return value.stringValue as string;
   if (value.timestampValue !== undefined) return new Date(value.timestampValue as string).getTime();
   if (value.arrayValue !== undefined) return ((value.arrayValue as { values?: FirestoreValue[] }).values ?? []).map(fromFirestoreValue);
-  if (value.mapValue !== undefined) { const fields = (value.mapValue as { fields: Record<string, FirestoreValue> }).fields; const obj: Record<string, unknown> = {}; for (const [k, v] of Object.entries(fields)) obj[k] = fromFirestoreValue(v); return obj; }
+  if (value.mapValue !== undefined) { const fields = (value.mapValue as { fields?: Record<string, FirestoreValue> }).fields; if (!fields) return {}; const obj: Record<string, unknown> = {}; for (const [k, v] of Object.entries(fields)) obj[k] = fromFirestoreValue(v); return obj; }
   return undefined;
 }
 
