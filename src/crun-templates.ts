@@ -1,9 +1,10 @@
 import type { Env, CrunTemplateSyncMessage } from "./types";
-import { batchGetDocs, commitWrites } from "./firestore";
-import { safeError, safeLog } from "./utils";
+import { batchGetDocs, commitWrites, getDoc } from "./firestore";
+import { safeLog } from "./utils";
 
 export type CatalogProvider = "kling" | "bytedance" | "vidu";
 type RecordValue = Record<string, unknown>;
+const CATALOG_DOC = "crun_template_catalog/catalog_v1";
 
 const SOURCES: Array<{ provider: CatalogProvider; path: string }> = [
   { provider: "kling", path: "/api/v1/client/job/kling-templates" },
@@ -62,9 +63,7 @@ function identity(provider: CatalogProvider, item: RecordValue): { key: string; 
     : provider === "bytedance" ? string(item.Title_en ?? item.Title ?? item.name) || providerId
     : string(item.name ?? item.title ?? item.template_name) || providerId;
   return {
-    key: providerId,
-    providerId,
-    name,
+    key: providerId, providerId, name,
     cover: string(item.cover_url ?? item.Cover ?? item.cover ?? item.coverUrl),
     preview: string(item.video_url ?? item.PreviewVideo ?? item.preview_video_url ?? item.previewVideo ?? item.video),
   };
@@ -88,29 +87,21 @@ async function requestCatalog(env: Env, path: string, page: number): Promise<Rec
   return object(payload.data);
 }
 
-/** Discover every provider's page count, then enqueue one independent task per page. */
+/** Discover page counts and enqueue bounded page jobs. */
 export async function enqueueCrunTemplateSync(env: Env): Promise<{ providers: number; pages: number }> {
   if (!env.CRUN_TEMPLATE_QUEUE) throw new Error("CRUN_TEMPLATE_QUEUE binding is not configured");
   let pagesQueued = 0;
   const messages: CrunTemplateSyncMessage[] = [];
-
   for (const source of SOURCES) {
     const firstPage = await requestCatalog(env, source.path, 1);
     const items = catalogItems(firstPage);
     const total = totalCount(firstPage);
-    if (total === null && items.length >= PAGE_SIZE) {
-      throw new Error("CRUN_CATALOG_TOTAL_MISSING: " + source.provider);
-    }
+    if (total === null && items.length >= PAGE_SIZE) throw new Error("CRUN_CATALOG_TOTAL_MISSING: " + source.provider);
     const pageCount = Math.max(1, Math.ceil((total ?? items.length) / PAGE_SIZE));
     if (pageCount > MAX_DISCOVERED_PAGES) throw new Error("CRUN_CATALOG_PAGE_COUNT_INVALID");
     for (let page = 1; page <= pageCount; page++) messages.push({ provider: source.provider, page });
   }
-
-  // Keep the producer below the Workers subrequest budget even for unusually large catalogs.
-  // A maximum of 4,000 messages means at most 40 sendBatch calls, plus three CRUN discovery calls.
   if (messages.length > 4000) throw new Error("CRUN_CATALOG_QUEUE_BATCH_LIMIT_EXCEEDED");
-
-  // Queue sendBatch accepts at most 100 messages per call. Keep each send bounded.
   for (let offset = 0; offset < messages.length; offset += 100) {
     const chunk = messages.slice(offset, offset + 100);
     await env.CRUN_TEMPLATE_QUEUE.sendBatch(chunk.map((body) => ({ body })));
@@ -120,17 +111,13 @@ export async function enqueueCrunTemplateSync(env: Env): Promise<{ providers: nu
   return { providers: SOURCES.length, pages: pagesQueued };
 }
 
-/** Processes exactly one provider page, so each Queue invocation has a bounded subrequest count. */
+/** Writes each template into its own map entry in catalog_v1, without replacing other entries. */
 export async function syncCrunTemplatePage(env: Env, provider: CatalogProvider, page: number): Promise<number> {
   if (!Number.isInteger(page) || page < 1 || page > MAX_DISCOVERED_PAGES) throw new Error("CRUN_CATALOG_PAGE_INVALID");
   const source = sourceFor(provider);
   const data = await requestCatalog(env, source.path, page);
   const items = catalogItems(data);
-  const pending: Array<{
-    docId: string;
-    info: { key: string; name: string; cover: string; preview: string; providerId: string };
-    record: RecordValue;
-  }> = [];
+  const pending: Array<{ docId: string; record: RecordValue }> = [];
 
   for (const raw of items) {
     const item = object(raw);
@@ -138,14 +125,15 @@ export async function syncCrunTemplatePage(env: Env, provider: CatalogProvider, 
     if (!info) continue;
     const docId = (provider + "_" + info.key).replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 140);
     const consumeItems = Array.isArray(item.ConsumeItems) ? item.ConsumeItems : [];
-    const aspectValues = item.aspect_ratio ?? item.SupportAspectRatio;
-    const durationValues = item.duration;
-    const resolutionValues = item.resolution;
-    const consumeResolutions = consumeItems.map((entry) => object(entry).Resolution).filter((value) => value !== undefined && value !== null);
     const asOptions = (value: unknown): unknown[] => Array.isArray(value) ? value : typeof value === "string" && value.trim() ? value.split(",").map((part) => part.trim()).filter(Boolean) : [];
-    const aspectOptions = asOptions(aspectValues);
-    const durationOptions = asOptions(durationValues);
-    const resolutionOptions = [...asOptions(resolutionValues), ...consumeResolutions].filter((value, index, all) => all.indexOf(value) === index);
+    const aspectOptions = asOptions(item.aspect_ratio ?? item.SupportAspectRatio);
+    const durationOptions = asOptions(item.duration);
+    const consumeResolutions = consumeItems.map((entry) => object(entry).Resolution).filter((value) => value !== undefined && value !== null);
+    const resolutionOptions = [...asOptions(item.resolution), ...consumeResolutions].filter((value, index, all) => all.indexOf(value) === index);
+    const rawCatalog = item.raw_catalog ?? item;
+    const rawMap = rawCatalog && typeof rawCatalog === "object" && !Array.isArray(rawCatalog)
+      ? rawCatalog as RecordValue
+      : { original_value: rawCatalog };
     const now = Date.now();
     const record: RecordValue = {
       id: docId,
@@ -159,24 +147,20 @@ export async function syncCrunTemplatePage(env: Env, provider: CatalogProvider, 
       cover_url: info.cover,
       preview_video_url: info.preview,
       is_active: false,
-      customization_config: {
-        allow_image_input: false,
-        allow_prompt: false,
-        allow_reference_video: false,
-      },
+      customization_config: { allow_image_input: false, allow_prompt: false, allow_reference_video: false },
       aspect_ratio_options: aspectOptions,
       duration_options: durationOptions,
       resolution_options: resolutionOptions,
       option_pricing: {},
       supported_options: [],
       pricing_version: 1,
-      sort_order: 999,
-      raw_catalog: item,
-      created_at: now,
-      updated_at: now,
+      sort_order: 0,
+      raw_catalog: rawMap,
+      created_at: null,
+      updated_at: null,
       last_synced_at: now,
     };
-    pending.push({ docId, info, record });
+    pending.push({ docId, record });
   }
 
   if (pending.length === 0) {
@@ -184,35 +168,34 @@ export async function syncCrunTemplatePage(env: Env, provider: CatalogProvider, 
     return 0;
   }
 
-  const writes: Array<{
-    path: string;
-    data: RecordValue;
-    updateMaskFields?: string[];
-  }> = [];
-  const catalogPaths = pending.map(({ docId }) => "crun_template_catalog/" + docId);
-  const existingCatalogDocs = await batchGetDocs(env, catalogPaths);
+  const unified = await getDoc(env, CATALOG_DOC);
+  const templates = object(unified?.data.templates);
+  const writes: Array<{ path: string; data: RecordValue; updateMaskFields: string[] }> = [];
   const providerFields = [
-    "id", "name", "description", "category", "provider",
-    "provider_template_id", "provider_cost", "cover_url",
-    "preview_video_url", "raw_catalog", "last_synced_at",
+    "id", "name", "description", "category", "provider", "provider_template_id",
+    "provider_cost", "cover_url", "preview_video_url", "raw_catalog", "last_synced_at",
   ];
 
   for (const { docId, record } of pending) {
-    const catalogPath = "crun_template_catalog/" + docId;
-    // Catalog sync owns provider-derived fields. Keep administrator-owned
-    // pricing/activation/customization fields intact on subsequent syncs.
-    if (existingCatalogDocs.has(catalogPath)) {
-      writes.push({
-        path: catalogPath,
-        data: Object.fromEntries(providerFields.map((key) => [key, record[key]])),
-        updateMaskFields: providerFields,
-      });
+    const current = object(templates[docId]);
+    const isExisting = Object.keys(current).length > 0;
+    const patch: RecordValue = {};
+    const mask = ["updated_at"];
+    if (isExisting) {
+      for (const key of providerFields) patch[key] = record[key];
+      mask.splice(0, 1, ...providerFields.map((key) => `templates.${docId}.${key}`), "updated_at");
     } else {
-      writes.push({ path: catalogPath, data: record });
+      Object.assign(patch, record);
+      mask.splice(0, 1, `templates.${docId}`, "updated_at");
     }
+    writes.push({
+      path: CATALOG_DOC,
+      data: { catalog_version: 1, updated_at: Date.now(), templates: { [docId]: patch } },
+      updateMaskFields: mask,
+    });
   }
 
   await commitWrites(env, writes);
-  safeLog("CRUN catalog page synced", { provider, page, count: pending.length, firestoreWrites: writes.length });
+  safeLog("CRUN catalog page synced into unified document", { provider, page, count: pending.length, firestoreWrites: writes.length });
   return pending.length;
 }
